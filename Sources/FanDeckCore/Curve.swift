@@ -159,6 +159,18 @@ public final class CurveEngine {
         inCriticalState = false
     }
 
+    /// 프로파일이 바뀔 때 쓰는 가벼운 초기화.
+    ///
+    /// 온도 평활·히스테리시스는 새 프로파일의 설정으로 다시 쌓아야 하지만,
+    /// 마지막으로 내보낸 RPM 은 그대로 둔다. 이걸 같이 지우면 램프 제한의 기준점이
+    /// 사라져서, 전환 직후 한 틱 만에 목표 회전수로 뛴다.
+    /// (자동 전환으로 성능 프로파일이 끼어드는 순간 팬이 갑자기 울부짖던 원인)
+    public func resetForProfileSwitch() {
+        smoothedTemperature = nil
+        effectiveTemperature = nil
+        inCriticalState = false
+    }
+
     public struct Decision: Sendable {
         public let targetRPM: Double?      // nil 이면 시스템 자동에 맡긴다
         public let isCritical: Bool
@@ -194,7 +206,8 @@ public final class CurveEngine {
 
         case .fixed(let rpm):
             let clamped = min(max(rpm, fan.minRPM), fan.maxRPM)
-            let limited = applyRamp(target: clamped, smoothing: smoothing, elapsed: elapsed)
+            let limited = applyRamp(target: clamped, smoothing: smoothing,
+                                    elapsed: elapsed, startingFrom: fan.currentRPM)
             return Decision(targetRPM: limited, isCritical: false,
                             rawTemperature: nil, effectiveTemperature: nil)
 
@@ -221,15 +234,20 @@ public final class CurveEngine {
 
             let desired = min(max(curve.rpm(at: effective), fan.minRPM), fan.maxRPM)
             // 4) 램프 제한
-            let limited = applyRamp(target: desired, smoothing: smoothing, elapsed: elapsed)
+            let limited = applyRamp(target: desired, smoothing: smoothing,
+                                    elapsed: elapsed, startingFrom: fan.currentRPM)
             return Decision(targetRPM: limited, isCritical: false,
                             rawTemperature: raw, effectiveTemperature: effective)
         }
     }
 
+    /// - Parameter startingFrom: 기준점이 없을 때(첫 틱, 시스템 자동에서 막 넘어온 직후)
+    ///   쓸 출발점. 팬이 실제로 돌고 있는 속도에서 출발해야 램프 제한이 의미가 있다.
+    ///   예전에는 여기서 목표값을 그대로 돌려줬는데, 그러면 1200rpm 에서 돌던 팬이
+    ///   한 틱 만에 3900rpm 으로 뛰었다.
     private func applyRamp(target: Double, smoothing: SmoothingSettings,
-                           elapsed: TimeInterval) -> Double {
-        guard let last = lastAppliedRPM else {
+                           elapsed: TimeInterval, startingFrom current: Double) -> Double {
+        guard let last = lastAppliedRPM ?? (current > 0 ? current : nil) else {
             lastAppliedRPM = target
             return target
         }

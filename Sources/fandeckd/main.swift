@@ -290,7 +290,7 @@ final class ControlLoop {
             if config.activeProfileID != profile.id {
                 config.activeProfileID = profile.id
                 overrides.removeAll()
-                engines.values.forEach { $0.reset() }
+                engines.values.forEach { $0.resetForProfileSwitch() }
                 log("자동 전환: \(profile.name) (\(reason))")
             }
             stateLock.lock(); autoSwitchReason = reason; stateLock.unlock()
@@ -308,7 +308,7 @@ final class ControlLoop {
                 if config.activeProfileID != base {
                     config.activeProfileID = base
                     overrides.removeAll()
-                    engines.values.forEach { $0.reset() }
+                    engines.values.forEach { $0.resetForProfileSwitch() }
                     let name = config.profiles.first { $0.id == base }?.name ?? "?"
                     log("조건이 풀린 지 \(Int(delay))초가 지나 원래 프로파일로 돌아갑니다: \(name)")
                 }
@@ -438,12 +438,12 @@ final class ControlLoop {
 
     func setOverride(fanIndex: Int, mode: FanMode) {
         overrides[fanIndex] = mode
-        engines[fanIndex]?.reset()
+        engines[fanIndex]?.resetForProfileSwitch()
     }
 
     func clearOverrides() {
         overrides.removeAll()
-        engines.values.forEach { $0.reset() }
+        engines.values.forEach { $0.resetForProfileSwitch() }
     }
 
     /// 사용자가 직접 프로파일을 골랐을 때 부른다.
