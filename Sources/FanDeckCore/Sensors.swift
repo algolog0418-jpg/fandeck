@@ -15,6 +15,63 @@
 
 import Foundation
 
+/// 온도를 어떤 단위로 보여줄지.
+public enum TemperatureUnit: String, Codable, Sendable, CaseIterable {
+    case celsius, fahrenheit
+
+    public var suffix: String { self == .celsius ? "°C" : "°F" }
+    public var shortSuffix: String { self == .celsius ? "°" : "°F" }
+
+    /// SMC 는 항상 섭씨를 주므로, 표시 직전에만 변환한다.
+    public func convert(_ celsius: Double) -> Double {
+        self == .celsius ? celsius : celsius * 9 / 5 + 32
+    }
+
+    /// 사용자가 입력한 값(커브 온도 등)을 섭씨로 되돌린다.
+    public func toCelsius(_ value: Double) -> Double {
+        self == .celsius ? value : (value - 32) * 5 / 9
+    }
+
+    public var localizedName: String {
+        self == .celsius ? "섭씨 (°C)" : "화씨 (°F)"
+    }
+}
+
+/// 값 표시 규칙을 한곳에 모은다. 단위·소수점 설정이 모든 화면에 똑같이 적용돼야 한다.
+public struct ValueFormat: Sendable, Hashable {
+    public var temperatureUnit: TemperatureUnit
+    /// 끄면 정수로만 보여준다(45.4 → 45).
+    public var showDecimals: Bool
+
+    public init(temperatureUnit: TemperatureUnit = .celsius, showDecimals: Bool = true) {
+        self.temperatureUnit = temperatureUnit
+        self.showDecimals = showDecimals
+    }
+
+    public static let `default` = ValueFormat()
+
+    /// 센서 값 하나를 문자열로. 온도는 설정된 단위로 변환해서 보여준다.
+    public func string(_ value: Double, unit: SensorUnit, includeSuffix: Bool = true) -> String {
+        if unit == .celsius {
+            let converted = temperatureUnit.convert(value)
+            let digits = showDecimals ? 1 : 0
+            let number = String(format: "%.\(digits)f", converted)
+            return includeSuffix ? number + temperatureUnit.suffix : number
+        }
+        let digits = showDecimals ? unit.fractionDigits : 0
+        let number = String(format: "%.\(digits)f", value)
+        return includeSuffix ? number + unit.suffix : number
+    }
+
+    /// 메뉴 막대처럼 자리가 좁은 곳용 — 항상 정수.
+    public func compactString(_ value: Double, unit: SensorUnit) -> String {
+        if unit == .celsius {
+            return "\(Int(temperatureUnit.convert(value).rounded()))" + temperatureUnit.shortSuffix
+        }
+        return String(format: "%.0f%@", value, unit.suffix)
+    }
+}
+
 public enum SensorUnit: String, Codable, Sendable {
     case celsius, watt, volt, ampere, rpm, percent
 

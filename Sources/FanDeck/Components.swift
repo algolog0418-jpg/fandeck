@@ -264,6 +264,7 @@ struct SensorCell: View {
     let descriptor: SensorDescriptor
     let value: Double?
     let isFavorite: Bool
+    var format: ValueFormat = .default
     let onToggleFavorite: () -> Void
 
     private var color: Color {

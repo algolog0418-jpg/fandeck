@@ -96,7 +96,7 @@ struct MenuBarView: View {
                             .frame(width: 14)
                         Text(d.name).font(.system(size: 11))
                         Spacer()
-                        Text(String(format: "%.\(d.unit.fractionDigits)f%@", v, d.unit.suffix))
+                        Text(model.display(v, unit: d.unit))
                             .font(Theme.numeric(12))
                             .foregroundStyle(Theme.accent(for: d.unit, value: v))
                             
@@ -141,8 +141,8 @@ struct MenuBarView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Button {
+                model.presentMainWindow()
                 openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
             } label: {
                 Label("창 열기", systemImage: "macwindow")
                     .font(.system(size: 11))

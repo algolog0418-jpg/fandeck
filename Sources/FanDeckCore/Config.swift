@@ -68,6 +68,19 @@ public struct Profile: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// 메뉴 막대에 아이콘을 어떻게 띄울지.
+public enum MenuBarIconStyle: String, Codable, Sendable, CaseIterable {
+    case monochrome, colored, hidden
+
+    public var localizedName: String {
+        switch self {
+        case .monochrome: return "보이기 (검은색 & 흰색)"
+        case .colored:    return "보이기 (색상)"
+        case .hidden:     return "숨기기"
+        }
+    }
+}
+
 public struct FanDeckConfig: Codable, Hashable, Sendable {
     public var version: Int
     public var activeProfileID: UUID
@@ -90,6 +103,36 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
     /// 기록 보관 시간(초). 기본 6시간.
     public var historyRetentionSeconds: Double
 
+    // MARK: 표시 설정
+    /// 온도 단위. SMC 는 섭씨를 주고, 표시 직전에만 바꾼다.
+    public var temperatureUnit: TemperatureUnit
+    /// 소수점 한 자리까지 보여줄지 (45.4 vs 45).
+    public var showDecimals: Bool
+
+    // MARK: 일반
+    /// 창을 닫으면 Dock 아이콘을 감출지. 끄면 창이 없어도 Dock 에 남는다.
+    public var showDockIcon: Bool
+    /// 로그인 후 자동 실행될 때 창을 띄우지 않고 메뉴 막대로만 시작할지.
+    public var startMinimized: Bool
+    /// 앱을 켤 때 새 버전이 있는지 GitHub 에서 확인할지.
+    public var checkUpdatesOnLaunch: Bool
+
+    // MARK: 메뉴 막대
+    public var menuBarIconStyle: MenuBarIconStyle
+    /// 메뉴 막대에 표시할 팬. nil 이면 첫 번째 팬.
+    public var menuBarFanIndex: Int?
+    /// 팬과 센서를 두 줄로 나눠 표시해 가로 공간을 아낀다.
+    public var menuBarTwoLines: Bool
+
+    // MARK: 센서
+    /// 외장(USB·Thunderbolt) 드라이브 온도까지 읽을지. 읽는 데 시간이 조금 걸린다.
+    public var includeExternalDrives: Bool
+
+    /// 표시 규칙을 한 덩어리로 넘길 때 쓴다.
+    public var valueFormat: ValueFormat {
+        ValueFormat(temperatureUnit: temperatureUnit, showDecimals: showDecimals)
+    }
+
     public init(version: Int = 1,
                 activeProfileID: UUID,
                 profiles: [Profile],
@@ -108,7 +151,16 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
                 favoriteSensorKeys: [String] = [SensorCatalog.cpuMaxKey,
                                                 SensorCatalog.gpuMaxKey,
                                                 "PSTR"],
-                historyRetentionSeconds: Double = 6 * 3600) {
+                historyRetentionSeconds: Double = 6 * 3600,
+                temperatureUnit: TemperatureUnit = .celsius,
+                showDecimals: Bool = true,
+                showDockIcon: Bool = false,
+                startMinimized: Bool = false,
+                checkUpdatesOnLaunch: Bool = true,
+                menuBarIconStyle: MenuBarIconStyle = .monochrome,
+                menuBarFanIndex: Int? = nil,
+                menuBarTwoLines: Bool = false,
+                includeExternalDrives: Bool = false) {
         self.version = version
         self.activeProfileID = activeProfileID
         self.profiles = profiles
@@ -122,6 +174,15 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
         self.historySensorKeys = historySensorKeys
         self.favoriteSensorKeys = favoriteSensorKeys
         self.historyRetentionSeconds = historyRetentionSeconds
+        self.temperatureUnit = temperatureUnit
+        self.showDecimals = showDecimals
+        self.showDockIcon = showDockIcon
+        self.startMinimized = startMinimized
+        self.checkUpdatesOnLaunch = checkUpdatesOnLaunch
+        self.menuBarIconStyle = menuBarIconStyle
+        self.menuBarFanIndex = menuBarFanIndex
+        self.menuBarTwoLines = menuBarTwoLines
+        self.includeExternalDrives = includeExternalDrives
     }
 
     /// 구버전 설정 파일에 없던 항목은 기본값으로 채운다.
@@ -143,6 +204,15 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
         favoriteSensorKeys = try c.decodeIfPresent([String].self, forKey: .favoriteSensorKeys)
             ?? [SensorCatalog.cpuMaxKey, SensorCatalog.gpuMaxKey, "PSTR"]
         historyRetentionSeconds = try c.decodeIfPresent(Double.self, forKey: .historyRetentionSeconds) ?? 6 * 3600
+        temperatureUnit = try c.decodeIfPresent(TemperatureUnit.self, forKey: .temperatureUnit) ?? .celsius
+        showDecimals = try c.decodeIfPresent(Bool.self, forKey: .showDecimals) ?? true
+        showDockIcon = try c.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
+        startMinimized = try c.decodeIfPresent(Bool.self, forKey: .startMinimized) ?? false
+        checkUpdatesOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .checkUpdatesOnLaunch) ?? true
+        menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .monochrome
+        menuBarFanIndex = try c.decodeIfPresent(Int.self, forKey: .menuBarFanIndex)
+        menuBarTwoLines = try c.decodeIfPresent(Bool.self, forKey: .menuBarTwoLines) ?? false
+        includeExternalDrives = try c.decodeIfPresent(Bool.self, forKey: .includeExternalDrives) ?? false
     }
 
     public var activeProfile: Profile? {

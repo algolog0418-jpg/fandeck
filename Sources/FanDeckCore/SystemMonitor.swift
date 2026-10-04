@@ -26,6 +26,10 @@ public struct MemoryUsage: Sendable, Hashable {
     public let wired: UInt64
     public let compressed: UInt64
     public let cached: UInt64
+    /// 활성 상태 보기의 "앱 메모리" 에 해당한다.
+    public var appMemory: UInt64 {
+        used > wired + compressed ? used - wired - compressed : 0
+    }
     /// macOS 의 "메모리 압박"에 해당하는 값(0~1).
     public let pressure: Double
 
@@ -137,10 +141,16 @@ public final class SystemMonitor: @unchecked Sendable {
         let pageSize = UInt64(vm_kernel_page_size)
         let wired = UInt64(stats.wire_count) * pageSize
         let compressed = UInt64(stats.compressor_page_count) * pageSize
-        let active = UInt64(stats.active_count) * pageSize
-        // 파일 캐시 중 다시 쓸 수 있는 부분은 "사용 중"으로 치지 않는다 — 활성 상태 보기와 같은 기준.
+
+        // 활성 상태 보기의 "앱 메모리"는 익명(internal) 페이지에서 언제든 버릴 수 있는
+        // purgeable 을 뺀 값이다. active_count 를 쓰면 파일 캐시가 섞여 들어가 수치가 어긋난다.
+        let internalPages = UInt64(stats.internal_page_count)
+        let purgeable = UInt64(stats.purgeable_count)
+        let appMemory = (internalPages > purgeable ? internalPages - purgeable : 0) * pageSize
+
+        // 파일에서 다시 읽어올 수 있는 캐시는 "사용 중"으로 치지 않는다.
         let cached = UInt64(stats.external_page_count) * pageSize
-        let used = active + wired + compressed
+        let used = appMemory + wired + compressed
 
         // 활성 상태 보기의 메모리 압박과 비슷하게, 압축·고정 메모리 비중으로 계산한다.
         let pressure = totalMemory > 0
@@ -156,7 +166,29 @@ public final class SystemMonitor: @unchecked Sendable {
     // 프로세스별 CPU 점유율을 직접 계산하려면 모든 프로세스의 스레드를 훑어야 해서
     // 비용이 크다. ps 한 번 호출이 훨씬 싸고, 계산 기준도 활성 상태 보기와 같다.
 
-    public func processes(limit: Int = 120) -> [ProcessEntry] {
+    /// 프로세스 하나가 실제로 차지하는 메모리.
+    ///
+    /// `ps` 의 RSS 는 공유 메모리를 중복으로 세서 활성 상태 보기와 값이 다르다.
+    /// 활성 상태 보기가 "메모리" 열에 쓰는 값은 phys_footprint 이므로 그걸 읽는다.
+    private func physicalFootprint(pid: Int32) -> UInt64? {
+        var info = rusage_info_v2()
+        let result = withUnsafeMutablePointer(to: &info) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(pid, RUSAGE_INFO_V2, $0)
+            }
+        }
+        guard result == 0 else { return nil }
+        return info.ri_phys_footprint
+    }
+
+    /// - Parameter displayNames: PID → 앱 표시 이름. GUI 앱은 실행 파일명(KakaoTalk)과
+    ///   사용자에게 보이는 이름(카카오톡)이 달라서, 그대로 두면 한글로 검색해도 안 걸린다.
+    ///   AppKit 이 없는 데몬에서도 쓸 수 있도록 매핑은 호출하는 쪽에서 넘겨받는다.
+    /// - Parameter limit: 0 이면 전부 돌려준다.
+    ///   화면에 몇 개를 보여줄지는 호출하는 쪽이 정한다. 여기서 미리 잘라내면
+    ///   CPU 를 거의 안 쓰는 앱(카카오톡 등)이 순위 밖으로 밀려나
+    ///   검색해도 목록에서 나타났다 사라졌다 한다.
+    public func processes(limit: Int = 0, displayNames: [Int32: String] = [:]) -> [ProcessEntry] {
         let currentUID = getuid()
         let currentUserName = ProcessInfo.processInfo.userName
 
@@ -190,18 +222,21 @@ public final class SystemMonitor: @unchecked Sendable {
             if let slash = name.lastIndex(of: "/") {
                 name = String(name[name.index(after: slash)...])
             }
+            // GUI 앱이면 사용자에게 보이는 이름으로 바꾼다.
+            if let display = displayNames[pid], !display.isEmpty { name = display }
             guard !name.isEmpty else { continue }
 
             entries.append(ProcessEntry(
                 pid: pid,
                 name: name,
                 cpuPercent: cpu,
-                memoryBytes: rssKB * 1024,
+                memoryBytes: physicalFootprint(pid: pid) ?? (rssKB * 1024),
                 user: user,
                 isOwnedByCurrentUser: user == currentUserName || currentUID == 0))
         }
 
-        return Array(entries.sorted { $0.cpuPercent > $1.cpuPercent }.prefix(limit))
+        let sorted = entries.sorted { $0.cpuPercent > $1.cpuPercent }
+        return limit > 0 ? Array(sorted.prefix(limit)) : sorted
     }
 
     /// 프로세스에 종료를 요청한다. 먼저 정상 종료(SIGTERM)를 보낸다.

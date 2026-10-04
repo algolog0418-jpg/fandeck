@@ -25,19 +25,60 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func setup() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "fan.fill", accessibilityDescription: "FanDeck")
             button.imagePosition = .imageLeading
-            button.title = " " + model.menuBarTitle
             button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
             button.target = self
             button.action = #selector(togglePopover(_:))
         }
         statusItem = item
+        applyAppearance()
 
         // 글자가 실제로 바뀔 때만 갱신한다.
         model.onMenuBarTitleChange = { [weak self] title in
-            self?.statusItem?.button?.title = " " + title
+            self?.applyTitle(title)
         }
+        model.onMenuBarAppearanceChange = { [weak self] in
+            self?.applyAppearance()
+        }
+    }
+
+    /// 두 줄 표시는 NSStatusItem 이 기본으로 지원하지 않아서,
+    /// 줄바꿈이 들어오면 작은 글씨의 attributed 문자열로 직접 그린다.
+    private func applyTitle(_ title: String) {
+        guard let button = statusItem?.button else { return }
+        if title.contains("\n") {
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            style.lineSpacing = -3
+            button.attributedTitle = NSAttributedString(string: " " + title, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+                .paragraphStyle: style,
+            ])
+        } else {
+            button.attributedTitle = NSAttributedString(string: "")
+            button.title = " " + title
+        }
+    }
+
+    /// 아이콘 표시 방식을 설정에 맞춘다.
+    func applyAppearance() {
+        guard let button = statusItem?.button else { return }
+        let style = model.config?.menuBarIconStyle ?? .monochrome
+        switch style {
+        case .hidden:
+            button.image = nil
+        case .monochrome:
+            let image = NSImage(systemSymbolName: "fan.fill", accessibilityDescription: "FanDeck")
+            image?.isTemplate = true          // 메뉴 막대 색(흑/백)에 자동으로 맞춰진다
+            button.image = image
+        case .colored:
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemTeal])
+            let image = NSImage(systemSymbolName: "fan.fill", accessibilityDescription: "FanDeck")?
+                .withSymbolConfiguration(config)
+            image?.isTemplate = false
+            button.image = image
+        }
+        applyTitle(model.menuBarTitle)
     }
 
     @objc private func togglePopover(_ sender: Any?) {

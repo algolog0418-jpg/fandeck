@@ -27,17 +27,27 @@ struct ActivityView: View {
     @Bindable var model: AppModel
     @StateObject private var ui = ActivityState()
 
+    /// 한 번에 그릴 행 수. 전체(보통 600개 넘는다)를 다 그리면 화면이 버벅인다.
+    /// 검색 중에는 제한하지 않는다 — 찾는 프로세스가 잘려 나가면 안 된다.
+    private static let visibleLimit = 200
+
+    private var isSearching: Bool {
+        !ui.search.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     private var filtered: [ProcessEntry] {
         let query = ui.search.trimmingCharacters(in: .whitespaces).lowercased()
         var list = model.processes
         if !query.isEmpty {
+            // 표시 이름과 PID 모두로 찾는다. 한글 이름도 여기서 걸린다.
             list = list.filter { $0.name.lowercased().contains(query) || String($0.pid).contains(query) }
         }
         switch ui.sortKey {
-        case .cpu:    return list.sorted { $0.cpuPercent > $1.cpuPercent }
-        case .memory: return list.sorted { $0.memoryBytes > $1.memoryBytes }
-        case .name:   return list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .cpu:    list.sort { $0.cpuPercent > $1.cpuPercent }
+        case .memory: list.sort { $0.memoryBytes > $1.memoryBytes }
+        case .name:   list.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         }
+        return isSearching ? list : Array(list.prefix(Self.visibleLimit))
     }
 
     var body: some View {
@@ -181,10 +191,11 @@ struct ActivityView: View {
 
             if let cpu = model.reading(SensorCatalog.cpuMaxKey) {
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(String(format: "%.1f", cpu))
+                    Text(model.display(cpu, unit: .celsius, includeSuffix: false))
                         .font(Theme.numeric(28, weight: .semibold))
                         .foregroundStyle(Theme.temperatureColor(cpu))
-                    Text("°C").font(Theme.numeric(13)).foregroundStyle(.secondary)
+                    Text(model.format.temperatureUnit.suffix)
+                        .font(Theme.numeric(13)).foregroundStyle(.secondary)
                 }
             }
 
@@ -236,7 +247,10 @@ struct ActivityView: View {
                 Text(error).font(Theme.caption).foregroundStyle(.orange).lineLimit(1)
             }
 
-            Text("\(filtered.count)개").font(Theme.caption).foregroundStyle(.tertiary)
+            Text(isSearching || model.processes.count <= Self.visibleLimit
+                 ? "\(filtered.count)개"
+                 : "\(filtered.count) / \(model.processes.count)개")
+                .font(Theme.caption).foregroundStyle(.tertiary)
         }
         .padding(.horizontal, Theme.gridSpacing)
         .padding(.vertical, 8)

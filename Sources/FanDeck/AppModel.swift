@@ -215,13 +215,22 @@ final class AppModel {
             return false
         }()
         let favorites = config?.favoriteSensorKeys ?? []
+        // GUI 앱의 표시 이름(카카오톡 등)은 AppKit 에서만 알 수 있다. 메인 스레드에서 미리 모은다.
+        var names: [Int32: String] = [:]
+        if wantProcesses {
+            for app in NSWorkspace.shared.runningApplications {
+                if let title = app.localizedName { names[app.processIdentifier] = title }
+            }
+        }
 
         Task.detached(priority: .userInitiated) {
             let values = SMCService.shared.snapshot(targets)
             let fanList = FanController.shared.readAllFans()
             let cpu = SystemMonitor.shared.cpuUsage()
             let memory = SystemMonitor.shared.memoryUsage()
-            let processList = wantProcesses ? SystemMonitor.shared.processes() : nil
+            let processList = wantProcesses
+                ? SystemMonitor.shared.processes(displayNames: names)
+                : nil
 
             // 히스토리 표본은 백그라운드에서 미리 만들어 둔다.
             var historyValues: [String: Double] = [:]
@@ -335,12 +344,22 @@ final class AppModel {
 
     func reading(_ key: String) -> Double? { readings[key] }
 
+    /// 온도 단위·소수점 설정. 모든 화면이 이걸 통해 숫자를 만든다.
+    var format: ValueFormat { config?.valueFormat ?? .default }
+
+    /// 센서 값을 설정에 맞춰 문자열로. 단위 접미사까지 붙인다.
+    func display(_ key: String, includeSuffix: Bool = true) -> String {
+        guard let d = descriptorsByKey[key], let v = readings[key] else { return "—" }
+        return format.string(v, unit: d.unit, includeSuffix: includeSuffix)
+    }
+
+    func display(_ value: Double, unit: SensorUnit, includeSuffix: Bool = true) -> String {
+        format.string(value, unit: unit, includeSuffix: includeSuffix)
+    }
+
     func descriptor(_ key: String) -> SensorDescriptor? { descriptorsByKey[key] }
 
-    func formatted(_ key: String) -> String {
-        guard let d = descriptorsByKey[key], let v = readings[key] else { return "—" }
-        return String(format: "%.\(d.unit.fractionDigits)f", v) + d.unit.suffix
-    }
+    func formatted(_ key: String) -> String { display(key) }
 
     var activeFan: FanInfo? {
         fans.first { $0.index == selectedFanIndex } ?? fans.first
@@ -416,7 +435,12 @@ final class AppModel {
     }
 
     func apply(config newConfig: FanDeckConfig) {
+        let appearanceChanged = config?.menuBarIconStyle != newConfig.menuBarIconStyle
+            || config?.menuBarTwoLines != newConfig.menuBarTwoLines
         config = newConfig
+        if appearanceChanged { onMenuBarAppearanceChange?() }
+        // 단위나 표시 설정이 바뀌면 메뉴 막대 글자도 즉시 다시 만든다.
+        updateMenuBarTitle()
         sendAndRefresh(.setConfig(newConfig), onFailure: "설정을 저장하지 못했습니다")
     }
 
@@ -470,17 +494,26 @@ final class AppModel {
     private(set) var menuBarTitle: String = "FanDeck"
     /// 메뉴 막대 아이템에 글자가 바뀌었음을 알린다(AppKit 쪽에서 받는다).
     @ObservationIgnored var onMenuBarTitleChange: ((String) -> Void)?
+    /// 아이콘 표시 방식 등 메뉴 막대 설정이 바뀌었을 때 알린다.
+    @ObservationIgnored var onMenuBarAppearanceChange: (() -> Void)?
 
     private func updateMenuBarTitle() {
         var parts: [String] = []
-        if config?.menuBarShowsFan ?? true, let fan = fans.first {
-            parts.append("\(Int(fan.currentRPM))rpm")
+        if config?.menuBarShowsFan ?? true {
+            // 어느 팬을 보여줄지 고를 수 있다. 지정이 없으면 첫 번째.
+            let index = config?.menuBarFanIndex
+            let fan = index.flatMap { idx in fans.first { $0.index == idx } } ?? fans.first
+            if let fan { parts.append("\(Int(fan.currentRPM))rpm") }
         }
         if config?.menuBarShowsTemperature ?? true {
             let key = config?.menuBarSensorKey ?? SensorCatalog.cpuMaxKey
-            if let v = readings[key] { parts.append("\(Int(v.rounded()))°") }
+            if let v = readings[key], let d = descriptorsByKey[key] {
+                parts.append(format.compactString(v, unit: d.unit))
+            }
         }
-        let newTitle = parts.isEmpty ? "FanDeck" : parts.joined(separator: " · ")
+        // 두 줄로 나누면 메뉴 막대 가로 폭을 아낄 수 있다.
+        let separator = (config?.menuBarTwoLines ?? false) ? "\n" : " · "
+        let newTitle = parts.isEmpty ? "FanDeck" : parts.joined(separator: separator)
         if newTitle != menuBarTitle {
             menuBarTitle = newTitle
             onMenuBarTitleChange?(newTitle)
@@ -494,6 +527,26 @@ final class AppModel {
         let visible = NSApp.windows.contains { window in
             window.isVisible && window.frame.width > 400 && window.frame.height > 300
         }
-        if visible != isWindowVisible { isWindowVisible = visible }
+        guard visible != isWindowVisible else { return }
+        isWindowVisible = visible
+
+        // 창을 닫으면 Dock 아이콘도 치운다. 메뉴 막대에 상주하는 앱이라
+        // 창이 없는데 Dock 을 차지할 이유가 없다. 창을 다시 열면 되돌린다.
+        // 설정에서 "독에 아이콘 표시" 를 켜면 창과 무관하게 항상 남는다.
+        // (정책을 바꿀 때 깜빡임이 있어서 실제로 달라질 때만 호출한다.)
+        let alwaysShowDock = config?.showDockIcon ?? false
+        let policy: NSApplication.ActivationPolicy = (visible || alwaysShowDock) ? .regular : .accessory
+        if NSApp.activationPolicy() != policy {
+            NSApp.setActivationPolicy(policy)
+        }
+    }
+
+    /// 메뉴 막대에서 창을 열 때 쓴다. Dock 아이콘을 먼저 되살려야
+    /// 창이 앞으로 나오고 메뉴 막대도 이 앱 것으로 바뀐다.
+    func presentMainWindow() {
+        if NSApp.activationPolicy() != .regular {
+            NSApp.setActivationPolicy(.regular)
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

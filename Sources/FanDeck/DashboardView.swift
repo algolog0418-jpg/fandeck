@@ -101,7 +101,7 @@ struct DashboardView: View {
                 if let d = model.descriptor(key) {
                     let value = model.reading(key)
                     StatTile(title: d.name,
-                             value: value.map { String(format: "%.\(d.unit.fractionDigits)f%@", $0, d.unit.suffix) } ?? "—",
+                             value: value.map { model.display($0, unit: d.unit) } ?? "—",
                              color: value.map { Theme.accent(for: d.unit, value: $0) } ?? .secondary,
                              symbol: d.group.symbolName,
                              series: model.history(forKey: key))
@@ -230,7 +230,7 @@ struct DashboardView: View {
     }
 
     private func statValue(_ value: Double, unit: SensorUnit, muted: Bool) -> some View {
-        Text(String(format: "%.\(unit.fractionDigits)f", value))
+        Text(model.display(value, unit: unit, includeSuffix: false))
             .font(Theme.numeric(12, weight: muted ? .regular : .semibold))
             .foregroundStyle(muted ? AnyShapeStyle(.secondary)
                                    : AnyShapeStyle(Theme.accent(for: unit, value: value)))

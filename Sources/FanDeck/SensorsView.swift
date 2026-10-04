@@ -132,6 +132,7 @@ struct SensorsView: View {
                         SensorCell(descriptor: d,
                                    value: model.reading(d.key),
                                    isFavorite: model.isFavorite(d.key),
+                                   format: model.format,
                                    onToggleFavorite: { model.toggleFavorite(d.key) })
                     }
                 }
@@ -143,6 +144,6 @@ struct SensorsView: View {
     private func groupSummary(_ items: [SensorDescriptor]) -> String? {
         let values = items.compactMap { model.reading($0.key) }
         guard let maximum = values.max(), let unit = items.first?.unit else { return nil }
-        return "최고 " + String(format: "%.\(unit.fractionDigits)f%@", maximum, unit.suffix)
+        return "최고 " + model.display(maximum, unit: unit)
     }
 }
