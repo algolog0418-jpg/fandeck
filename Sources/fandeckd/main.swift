@@ -1,0 +1,555 @@
+//  fandeckd — FanDeck 제어 데몬 (root)
+//
+//  SMC 쓰기는 root 만 가능하므로 실제 팬 제어는 전부 이 프로세스가 한다.
+//  LaunchDaemon 으로 등록되어 로그인 전부터 돌고, 앱을 꺼도 설정한 커브가 유지된다.
+//
+//  데몬이 죽거나 종료될 때는 반드시 팬을 시스템 자동으로 되돌린다.
+//  제어를 쥔 채 죽으면 고정 RPM 이 그대로 남아 과열로 이어질 수 있다.
+
+import Foundation
+import Darwin
+
+let daemonVersion = "1.0.0"
+
+// MARK: - 로그
+
+final class Log {
+    static let shared = Log()
+    private let handle: FileHandle?
+    private let queue = DispatchQueue(label: "fandeck.log")
+    private let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    private init() {
+        let path = FanDeckPaths.logFile
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
+        handle = FileHandle(forWritingAtPath: path)
+        handle?.seekToEndOfFile()
+    }
+
+    func write(_ message: String) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let line = "[\(self.formatter.string(from: Date()))] \(message)\n"
+            if let data = line.data(using: .utf8) {
+                self.handle?.write(data)
+            }
+            FileHandle.standardError.write(Data(line.utf8))
+        }
+    }
+}
+
+func log(_ message: String) { Log.shared.write(message) }
+
+// MARK: - 설정 저장소
+
+final class ConfigStore {
+    private let lock = NSLock()
+    private var config: FanDeckConfig
+
+    init(defaultFans: [FanInfo]) {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: FanDeckPaths.supportDirectory,
+                                withIntermediateDirectories: true,
+                                attributes: [.posixPermissions: 0o755])
+        if let data = fm.contents(atPath: FanDeckPaths.configFile),
+           let loaded = try? FanDeckConfig.decode(data) {
+            config = loaded
+            log("설정 파일을 불러왔습니다 (프로파일 \(loaded.profiles.count)개)")
+        } else {
+            config = FanDeckConfig.makeDefault(fans: defaultFans)
+            log("설정 파일이 없어 기본 설정을 만들었습니다")
+            save()
+        }
+    }
+
+    func current() -> FanDeckConfig {
+        lock.lock(); defer { lock.unlock() }
+        return config
+    }
+
+    func update(_ newValue: FanDeckConfig) {
+        lock.lock()
+        config = newValue
+        lock.unlock()
+        save()
+    }
+
+    func mutate(_ body: (inout FanDeckConfig) -> Void) {
+        lock.lock()
+        body(&config)
+        let snapshot = config
+        lock.unlock()
+        write(snapshot)
+    }
+
+    private func save() {
+        lock.lock(); let snapshot = config; lock.unlock()
+        write(snapshot)
+    }
+
+    private func write(_ snapshot: FanDeckConfig) {
+        guard let data = try? snapshot.encoded() else { return }
+        // 쓰다 말고 죽어도 설정이 깨지지 않도록 임시 파일에 쓰고 바꿔치운다.
+        let tmp = FanDeckPaths.configFile + ".tmp"
+        do {
+            try data.write(to: URL(fileURLWithPath: tmp))
+            _ = try FileManager.default.replaceItemAt(URL(fileURLWithPath: FanDeckPaths.configFile),
+                                                      withItemAt: URL(fileURLWithPath: tmp))
+            // 관리자 그룹이 읽을 수 있어야 앱에서 설정을 확인할 수 있다.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                                   ofItemAtPath: FanDeckPaths.configFile)
+        } catch {
+            log("설정 저장 실패: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - 실행 중인 프로세스 조회 (자동 프로파일 전환용)
+
+enum ProcessScanner {
+    /// 커널에서 프로세스 목록을 직접 가져온다. 데몬에는 NSWorkspace 가 없다.
+    static func runningProcessNames() -> Set<String> {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var size = 0
+        guard sysctl(&mib, 4, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+
+        let count = size / MemoryLayout<kinfo_proc>.stride + 16
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: count)
+        size = count * MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 4, &procs, &size, nil, 0) == 0 else { return [] }
+
+        let actual = size / MemoryLayout<kinfo_proc>.stride
+        var names = Set<String>()
+        for i in 0..<min(actual, procs.count) {
+            var comm = procs[i].kp_proc.p_comm
+            let name = withUnsafeBytes(of: &comm) { raw -> String in
+                String(cString: raw.baseAddress!.assumingMemoryBound(to: CChar.self))
+            }
+            if !name.isEmpty { names.insert(name.lowercased()) }
+        }
+        return names
+    }
+}
+
+// MARK: - 제어 루프
+
+final class ControlLoop {
+    private let smc = SMCService.shared
+    private let fanController = FanController.shared
+    private let store: ConfigStore
+    private var engines: [Int: CurveEngine] = [:]
+    private var descriptors: [String: SensorDescriptor] = [:]
+    private var lastTick = Date()
+    private let startedAt = Date()
+
+    private let stateLock = NSLock()
+    private var runtimeStates: [Int: FanRuntimeState] = [:]
+    private var criticalFlag = false
+    private var autoSwitchReason: String?
+    private(set) var smcWritable = false
+    /// 슬라이더로 임시 지정한 모드. 프로파일을 바꾸면 사라진다.
+    private var overrides: [Int: FanMode] = [:]
+    /// 상주하면서 계속 쌓는 시계열. 앱을 껐다 켜도 추이가 남아 있다.
+    let history: HistoryBuffer
+
+    init(store: ConfigStore, descriptors: [SensorDescriptor]) {
+        self.store = store
+        self.descriptors = Dictionary(uniqueKeysWithValues: descriptors.map { ($0.key, $0) })
+        // 보관 시간 ÷ 틱 간격 만큼의 표본을 담을 수 있게 잡는다.
+        let config = store.current()
+        let slots = Int(config.historyRetentionSeconds / max(config.tickInterval, 0.5))
+        self.history = HistoryBuffer(capacity: min(max(slots, 600), 60_000))
+    }
+
+    func checkWritable() {
+        let fans = fanController.readAllFans()
+        guard let first = fans.first else {
+            log("팬을 찾지 못했습니다")
+            smcWritable = false
+            return
+        }
+        smcWritable = fanController.verifyWritable(first.index)
+        log(smcWritable
+            ? "SMC 팬 쓰기 확인 완료 — 제어 가능합니다"
+            : "SMC 팬 쓰기가 반영되지 않습니다 — 자동 모드로만 동작합니다")
+    }
+
+    private func sensorValue(_ key: String) -> Double? {
+        if let d = descriptors[key] { return smc.value(for: d) }
+        return smc.read(key)
+    }
+
+    /// 자동 전환 규칙을 평가해 활성 프로파일을 바꾼다.
+    private func evaluateAutoSwitch(config: inout FanDeckConfig) {
+        guard config.autoSwitchEnabled else {
+            if autoSwitchReason != nil {
+                stateLock.lock(); autoSwitchReason = nil; stateLock.unlock()
+            }
+            return
+        }
+        var processNames: Set<String>?
+        var best: (Profile, String)?
+
+        for profile in config.profiles.sorted(by: { $0.priority > $1.priority }) {
+            switch profile.trigger {
+            case .manual:
+                continue
+            case .appRunning(let names):
+                if processNames == nil { processNames = ProcessScanner.runningProcessNames() }
+                let hit = names.first { processNames!.contains($0.lowercased()) }
+                if let hit, best == nil { best = (profile, "\(hit) 실행 중") }
+            case .sensorAbove(let key, let threshold):
+                if let v = sensorValue(key), v > threshold, best == nil {
+                    best = (profile, "\(key) \(String(format: "%.0f", v))°C > \(Int(threshold))°C")
+                }
+            }
+        }
+
+        if let (profile, reason) = best, config.activeProfileID != profile.id {
+            config.activeProfileID = profile.id
+            overrides.removeAll()
+            engines.values.forEach { $0.reset() }
+            log("자동 전환: \(profile.name) (\(reason))")
+            stateLock.lock(); autoSwitchReason = reason; stateLock.unlock()
+        } else if best == nil {
+            stateLock.lock(); autoSwitchReason = nil; stateLock.unlock()
+        }
+    }
+
+    func tick() {
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastTick)
+        lastTick = now
+
+        var config = store.current()
+        let previousID = config.activeProfileID
+        evaluateAutoSwitch(config: &config)
+        if config.activeProfileID != previousID {
+            store.update(config)
+        }
+
+        guard let profile = config.activeProfile else { return }
+        let fans = fanController.readAllFans()
+        var newStates: [Int: FanRuntimeState] = [:]
+        var anyCritical = false
+
+        for fan in fans {
+            let engine = engines[fan.index] ?? {
+                let e = CurveEngine()
+                engines[fan.index] = e
+                return e
+            }()
+
+            var setting = profile.setting(for: fan.index)
+            if let override = overrides[fan.index] {
+                setting = FanSetting(fanIndex: fan.index, mode: override)
+            }
+
+            let decision = engine.decide(setting: setting, fan: fan,
+                                         smoothing: profile.smoothing,
+                                         safety: config.safety,
+                                         readSensor: { [weak self] in self?.sensorValue($0) },
+                                         elapsed: elapsed)
+            if decision.isCritical { anyCritical = true }
+
+            if let target = decision.targetRPM {
+                if smcWritable {
+                    // 매 틱 다시 쓴다. thermalmonitord 가 값을 되돌리는 모델이 있어
+                    // 한 번 쓰고 마는 방식은 신뢰할 수 없다.
+                    do { _ = try fanController.setTarget(fan.index, rpm: target) }
+                    catch { log("팬 \(fan.index) 쓰기 실패: \(error)") }
+                }
+            } else if case .automatic = setting.mode {
+                // 자동으로 바뀐 직후 한 번만 시스템에 돌려주면 된다.
+                if runtimeStates[fan.index]?.appliedRPM != nil, smcWritable {
+                    try? fanController.setAutomatic(fan.index)
+                    log("팬 \(fan.index) 를 시스템 자동 제어로 되돌렸습니다")
+                }
+            }
+
+            newStates[fan.index] = FanRuntimeState(
+                fanIndex: fan.index,
+                appliedRPM: decision.targetRPM,
+                effectiveTemperature: decision.effectiveTemperature,
+                modeLabel: decision.isCritical ? "과열 보호" : setting.mode.label)
+        }
+
+        stateLock.lock()
+        runtimeStates = newStates
+        criticalFlag = anyCritical
+        stateLock.unlock()
+
+        recordHistory(config: config, fans: fans)
+    }
+
+    /// 기록 대상 센서만 골라 한 표본으로 남긴다. 전부 기록하면 표본 하나가 174개 값이 되어
+    /// 메모리와 전송량이 과해진다.
+    private func recordHistory(config: FanDeckConfig, fans: [FanInfo]) {
+        var keys = Set(config.historySensorKeys)
+        keys.formUnion(config.favoriteSensorKeys)
+        if case .curve(let curve)? = config.activeProfile?.fanSettings.first?.mode {
+            keys.insert(curve.sensorKey)
+        }
+        keys.insert(config.safety.sensorKey)
+        keys.insert(config.menuBarSensorKey)
+
+        var values: [String: Double] = [:]
+        values.reserveCapacity(keys.count)
+        for key in keys {
+            if let v = sensorValue(key) { values[key] = v }
+        }
+        var rpm: [Int: Double] = [:]
+        for fan in fans { rpm[fan.index] = fan.currentRPM }
+
+        history.append(HistorySample(timestamp: Date().timeIntervalSince1970,
+                                     values: values, fanRPM: rpm))
+    }
+
+    func snapshot() -> StatusSnapshot {
+        let config = store.current()
+        stateLock.lock()
+        let states = Array(runtimeStates.values).sorted { $0.fanIndex < $1.fanIndex }
+        let critical = criticalFlag
+        let reason = autoSwitchReason
+        stateLock.unlock()
+
+        return StatusSnapshot(
+            daemonVersion: daemonVersion,
+            uptimeSeconds: Date().timeIntervalSince(startedAt),
+            activeProfileID: config.activeProfileID,
+            activeProfileName: config.activeProfile?.name ?? "알 수 없음",
+            isCritical: critical,
+            smcWritable: smcWritable,
+            fans: fanController.readAllFans(),
+            runtime: states,
+            autoSwitchReason: reason)
+    }
+
+    func setOverride(fanIndex: Int, mode: FanMode) {
+        overrides[fanIndex] = mode
+        engines[fanIndex]?.reset()
+    }
+
+    func clearOverrides() {
+        overrides.removeAll()
+        engines.values.forEach { $0.reset() }
+    }
+
+    /// 모든 팬을 시스템 자동으로 돌려놓는다. 종료 경로에서 반드시 호출된다.
+    func releaseAll() {
+        guard smcWritable else { return }
+        for fan in fanController.readAllFans() {
+            try? fanController.setAutomatic(fan.index)
+        }
+        log("모든 팬을 시스템 자동 제어로 반환했습니다")
+    }
+}
+
+// MARK: - 소켓 서버
+
+final class SocketServer {
+    private let path: String
+    private let handler: (IPCRequest) -> IPCResponse
+    private var listenFD: Int32 = -1
+    private let queue = DispatchQueue(label: "fandeck.socket")
+
+    init(path: String, handler: @escaping (IPCRequest) -> IPCResponse) {
+        self.path = path
+        self.handler = handler
+    }
+
+    func start() throws {
+        unlink(path)
+        listenFD = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard listenFD >= 0 else { throw IPCError.daemonUnavailable }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        withUnsafeMutableBytes(of: &addr.sun_path) { $0.copyBytes(from: bytes) }
+        addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+
+        let bound = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(listenFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0 else {
+            log("소켓 bind 실패: \(String(cString: strerror(errno)))")
+            throw IPCError.daemonUnavailable
+        }
+        guard listen(listenFD, 16) == 0 else { throw IPCError.daemonUnavailable }
+
+        // root:admin 0660 — 관리자 계정만 제어할 수 있게 한다.
+        chmod(path, 0o660)
+        let adminGID: gid_t = {
+            guard let group = getgrnam("admin") else { return 80 }
+            return group.pointee.gr_gid
+        }()
+        chown(path, 0, adminGID)
+
+        queue.async { [weak self] in self?.acceptLoop() }
+        log("소켓 서버 시작: \(path)")
+    }
+
+    private func acceptLoop() {
+        while true {
+            let client = accept(listenFD, nil, nil)
+            if client < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            handleClient(client)
+            Darwin.close(client)
+        }
+    }
+
+    private func handleClient(_ fd: Int32) {
+        var buffer = Data()
+        var chunk = [UInt8](repeating: 0, count: 8192)
+        // 요청은 한 줄짜리 JSON 이다. 개행이 나올 때까지만 읽는다.
+        while !buffer.contains(0x0A) {
+            let n = Darwin.read(fd, &chunk, chunk.count)
+            if n <= 0 { return }
+            buffer.append(contentsOf: chunk[0..<n])
+            if buffer.count > 1_000_000 { return }   // 비정상적으로 큰 입력 차단
+        }
+        guard let newline = buffer.firstIndex(of: 0x0A) else { return }
+        let line = buffer[buffer.startIndex..<newline]
+
+        let response: IPCResponse
+        if let request = try? JSONDecoder().decode(IPCRequest.self, from: line) {
+            response = handler(request)
+        } else {
+            response = .failure("요청을 해석할 수 없습니다")
+        }
+
+        guard var data = try? JSONEncoder().encode(response) else { return }
+        data.append(0x0A)
+        data.withUnsafeBytes { raw in
+            var sent = 0
+            while sent < raw.count {
+                let n = Darwin.write(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent)
+                if n <= 0 { return }
+                sent += n
+            }
+        }
+    }
+
+    func stop() {
+        if listenFD >= 0 { Darwin.close(listenFD) }
+        unlink(path)
+    }
+}
+
+// MARK: - 진입점
+
+guard getuid() == 0 else {
+    FileHandle.standardError.write(Data("fandeckd 는 root 로 실행해야 합니다.\n".utf8))
+    exit(1)
+}
+
+log("fandeckd \(daemonVersion) 시작")
+
+do {
+    try SMCService.shared.open()
+} catch {
+    log("AppleSMC 를 열 수 없습니다: \(error)")
+    exit(1)
+}
+
+let availableKeys = Set((try? SMCService.shared.allKeys()) ?? [])
+let descriptors = SensorCatalog.build(availableKeys: availableKeys)
+log("센서 \(descriptors.count)개 인식 (SMC 키 \(availableKeys.count)개)")
+
+let initialFans = FanController.shared.readAllFans()
+log("팬 \(initialFans.count)개: " + initialFans.map {
+    "#\($0.index) \($0.currentRPM.rounded())rpm (\($0.minRPM.rounded())~\($0.maxRPM.rounded()))"
+}.joined(separator: ", "))
+
+let store = ConfigStore(defaultFans: initialFans)
+let loop = ControlLoop(store: store, descriptors: descriptors)
+loop.checkWritable()
+
+let server = SocketServer(path: FanDeckPaths.socketPath) { request in
+    switch request {
+    case .ping:
+        return .pong(version: daemonVersion)
+    case .status:
+        return .status(loop.snapshot())
+    case .getConfig:
+        return .config(store.current())
+    case .setConfig(let newConfig):
+        store.update(newConfig)
+        loop.clearOverrides()
+        log("설정이 갱신되었습니다")
+        return .ok
+    case .activateProfile(let id):
+        var config = store.current()
+        guard config.profiles.contains(where: { $0.id == id }) else {
+            return .failure("그런 프로파일이 없습니다")
+        }
+        config.activeProfileID = id
+        store.update(config)
+        loop.clearOverrides()
+        log("프로파일 전환: \(config.activeProfile?.name ?? "?")")
+        return .ok
+    case .setFanMode(let index, let mode):
+        loop.setOverride(fanIndex: index, mode: mode)
+        return .ok
+    case .verifyWritable:
+        loop.checkWritable()
+        return .writable(loop.smcWritable)
+    case .releaseAll:
+        loop.clearOverrides()
+        loop.releaseAll()
+        return .ok
+    case .history(let sinceSeconds, let maxCount):
+        let since = sinceSeconds.map { Date().timeIntervalSince1970 - $0 }
+        return .history(loop.history.samples(since: since, maxCount: maxCount ?? 1200))
+    }
+}
+
+do { try server.start() } catch {
+    log("소켓 서버를 시작할 수 없습니다: \(error)")
+    exit(1)
+}
+
+// 종료 시 팬 제어를 반드시 시스템에 돌려준다.
+// DispatchSource 는 참조가 끊기면 동작을 멈추므로 전역에 붙잡아 둔다.
+var signalSources: [DispatchSourceSignal] = []
+var shuttingDown = false
+func shutdown(_ reason: String) {
+    guard !shuttingDown else { return }
+    shuttingDown = true
+    log("종료 요청(\(reason)) — 팬 제어를 반환합니다")
+    loop.releaseAll()
+    server.stop()
+    // 로그가 디스크에 닿을 시간을 준다.
+    Thread.sleep(forTimeInterval: 0.2)
+    exit(0)
+}
+
+for sig in [SIGTERM, SIGINT, SIGHUP] {
+    signal(sig, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler { shutdown("signal \(sig)") }
+    source.resume()
+    // 소스가 해제되지 않도록 붙잡아 둔다.
+    signalSources.append(source)
+}
+
+let timer = DispatchSource.makeTimerSource(queue: .main)
+timer.schedule(deadline: .now() + 1.0,
+               repeating: store.current().tickInterval)
+timer.setEventHandler { loop.tick() }
+timer.resume()
+
+log("제어 루프 시작 (주기 \(store.current().tickInterval)초)")
+dispatchMain()

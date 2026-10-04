@@ -1,0 +1,5 @@
+build/
+백업/
+*.o
+.DS_Store
+*.xcuserdatad
