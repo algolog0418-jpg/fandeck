@@ -289,59 +289,31 @@ struct DashboardView: View {
                     .labelsHidden()
                 ))
 
-            Chart {
-                ForEach(highlightKeys.prefix(3), id: \.self) { key in
+            TrendChart(model: model,
+                       keys: Array(highlightKeys.prefix(3)),
+                       fan: fan)
+                .frame(height: 230)
+
+            HStack(spacing: 14) {
+                ForEach(Array(highlightKeys.prefix(3).enumerated()), id: \.offset) { index, key in
                     if let d = model.descriptor(key), d.unit == .celsius {
-                        ForEach(Array(model.history(forKey: key).enumerated()),
-                                id: \.offset) { _, point in
-                            LineMark(x: .value("시각", point.0),
-                                     y: .value("온도", point.1),
-                                     series: .value("Series", d.displayName))
-                                .foregroundStyle(by: .value("Series", d.displayName))
-                                .lineStyle(StrokeStyle(lineWidth: 1.8))
-                                .interpolationMethod(.monotone)
-                        }
+                        legendDot(color: TrendChart.seriesColors[index % TrendChart.seriesColors.count],
+                                  text: d.displayName)
                     }
                 }
-                // 팬 속도는 축이 달라서 온도 범위로 환산해 겹쳐 그린다.
-                if let fan {
-                    ForEach(Array(model.fanHistory(index: fan.index).enumerated()),
-                            id: \.offset) { _, point in
-                        let normalized = fan.maxRPM > fan.minRPM
-                            ? (point.1 - fan.minRPM) / (fan.maxRPM - fan.minRPM) : 0
-                        AreaMark(x: .value("시각", point.0),
-                                 y: .value("온도", 20 + normalized * 80),
-                                 series: .value("Series", L.t("팬 속도", "Fan speed")))
-                            .foregroundStyle(
-                                LinearGradient(colors: [Color.accentColor.opacity(0.22),
-                                                        Color.accentColor.opacity(0.02)],
-                                               startPoint: .top, endPoint: .bottom))
-                            .interpolationMethod(.monotone)
-                    }
+                if model.fans.first != nil {
+                    legendDot(color: .accentColor, text: L.t("팬 속도", "Fan speed"))
                 }
+                Spacer()
             }
-            .chartYScale(domain: 20...100)
-            .chartYAxis {
-                AxisMarks(position: .leading, values: [20, 40, 60, 80, 100]) { value in
-                    AxisGridLine().foregroundStyle(.secondary.opacity(0.12))
-                    AxisValueLabel {
-                        if let v = value.as(Double.self) {
-                            Text("\(Int(v))°").font(Theme.caption)
-                        }
-                    }
-                }
-            }
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 5)) { _ in
-                    AxisGridLine().foregroundStyle(.secondary.opacity(0.08))
-                    AxisValueLabel(format: .dateTime.hour().minute())
-                }
-            }
-            .chartLegend(position: .bottom, spacing: 8)
-            .chartPlotStyle { $0.clipped() }
-            .frame(height: 230)
-            .clipped()
         }
         .card()
+    }
+
+    private func legendDot(color: Color, text: String) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(text).font(Theme.caption).foregroundStyle(.secondary)
+        }
     }
 }

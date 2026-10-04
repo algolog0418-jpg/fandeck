@@ -36,8 +36,12 @@ final class AppModel {
     /// 마지막으로 반영한 설정 개정 번호.
     @ObservationIgnored private var lastConfigRevision = -1
 
-    var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+    var appVersion: String { BuildInfo.full }
+
+    /// 서비스가 앱과 같은 빌드인지. 설정 구조가 같아도 빌드가 다르면 알려는 준다.
+    var helperBuildMismatch: Bool {
+        guard let serviceVersion = snapshot?.daemonVersion else { return false }
+        return serviceVersion != BuildInfo.full
     }
     private(set) var lastError: String?
 

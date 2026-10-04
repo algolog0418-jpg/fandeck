@@ -25,9 +25,9 @@ final class UpdateChecker: ObservableObject {
 
     private init() {}
 
-    var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
-    }
+    var currentVersion: String { BuildInfo.version }
+    /// 화면에 띄우는 "1.0.0 (빌드 42)" 형태.
+    var displayVersion: String { BuildInfo.full }
 
     func check(silent: Bool = false) {
         if !silent { state = .checking }

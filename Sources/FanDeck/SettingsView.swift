@@ -185,7 +185,7 @@ struct SettingsView: View {
         HStack(spacing: 12) {
             Image(systemName: "fan.fill").font(.system(size: 22)).foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text("FanDeck \(updater.currentVersion)").font(.system(size: 13, weight: .semibold))
+                Text("FanDeck \(updater.displayVersion)").font(.system(size: 13, weight: .semibold))
                 switch updater.state {
                 case .checking:
                     Text(L.t("확인 중…", "Checking…")).font(Theme.caption).foregroundStyle(.secondary)
@@ -196,7 +196,9 @@ struct SettingsView: View {
                 case .failed(let message):
                     Text(message).font(Theme.caption).foregroundStyle(.secondary).lineLimit(1)
                 case .idle:
-                    Text("센서 \(model.descriptors.count)개 · 팬 \(model.fans.count)개 인식됨")
+                    Text(L.t("센서 ", "") + "\(model.descriptors.count)"
+                         + L.t("개 · 팬 ", " sensors · ") + "\(model.fans.count)"
+                         + L.t("개 인식됨", " fans") + " · " + BuildInfo.date)
                         .font(Theme.caption).foregroundStyle(.secondary)
                 }
             }
@@ -586,6 +588,10 @@ struct SettingsView: View {
                     if let uptime = model.snapshot?.uptimeSeconds {
                         Text("\(formatUptime(uptime))째 동작 중")
                             .font(Theme.caption).foregroundStyle(.secondary)
+                    }
+                    if model.helperBuildMismatch, let v = model.snapshot?.daemonVersion {
+                        Text(L.t("서비스 ", "service ") + v)
+                            .font(Theme.caption).foregroundStyle(.tertiary)
                     }
                 } else {
                     StatusBadge(text: L.t("꺼짐", "Off"), color: .orange)

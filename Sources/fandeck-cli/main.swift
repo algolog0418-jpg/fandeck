@@ -5,7 +5,7 @@
 
 import Foundation
 
-let version = "1.0.0"
+let version = BuildInfo.full
 
 // MARK: 터미널 꾸미기
 

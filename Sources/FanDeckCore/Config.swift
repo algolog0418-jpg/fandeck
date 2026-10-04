@@ -253,23 +253,32 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
     }
 
     /// 팬의 실제 최소/최대 RPM 을 알아야 쓸 만한 기본 커브가 나오므로 인자로 받는다.
+    ///
+    /// 팬마다 회전 범위가 다를 수 있어서(맥북의 좌우 팬이 다른 경우가 있다)
+    /// 하나로 뭉뚱그리지 않고 각 팬의 범위로 따로 만든다.
     public static func makeDefault(fans: [FanInfo]) -> FanDeckConfig {
-        let minRPM = fans.map(\.minRPM).min() ?? 1000
-        let maxRPM = fans.map(\.maxRPM).max() ?? 4900
-        let indices = fans.isEmpty ? [0] : fans.map(\.index)
+        // 팬을 못 찾은 경우에만 쓰는 값. 실제 팬이 있으면 언제나 그 팬의 값을 쓴다.
+        let fallbackMin = 1200.0, fallbackMax = 4000.0
+        let targets: [(index: Int, minRPM: Double, maxRPM: Double)] = fans.isEmpty
+            ? [(0, fallbackMin, fallbackMax)]
+            : fans.map { ($0.index, $0.minRPM, $0.maxRPM) }
+        let maxRPM = targets.map(\.maxRPM).max() ?? fallbackMax
 
         func curveSettings(_ scale: (Double) -> Double, temps: [Double]) -> [FanSetting] {
-            indices.map { idx in
+            targets.map { target in
                 let points = zip(temps, temps.indices).map { (t, i) -> CurvePoint in
                     let frac = Double(i) / Double(max(temps.count - 1, 1))
                     return CurvePoint(temperature: t,
-                                      rpm: minRPM + (maxRPM - minRPM) * scale(frac))
+                                      rpm: target.minRPM
+                                           + (target.maxRPM - target.minRPM) * scale(frac))
                 }
-                return FanSetting(fanIndex: idx,
+                return FanSetting(fanIndex: target.index,
                                   mode: .curve(FanCurve(sensorKey: SensorCatalog.cpuMaxKey,
                                                         points: points)))
             }
         }
+
+        let indices = targets.map(\.index)
 
         let silent = Profile(
             name: "조용함", symbol: "moon.zzz.fill",
@@ -293,7 +302,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
 
         let maxProfile = Profile(
             name: "최고 속도", symbol: "gauge.high",
-            fanSettings: indices.map { FanSetting(fanIndex: $0, mode: .fixed(rpm: maxRPM)) },
+            fanSettings: targets.map { FanSetting(fanIndex: $0.index, mode: .fixed(rpm: $0.maxRPM)) },
             smoothing: SmoothingSettings(rampUpPerSecond: 2000, rampDownPerSecond: 2000),
             isBuiltIn: true)
 
@@ -304,6 +313,76 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
 
         return FanDeckConfig(activeProfileID: system.id,
                              profiles: [system, silent, balanced, performance, maxProfile])
+    }
+
+    /// 저장된 설정을 지금 이 맥의 팬에 맞춘다.
+    ///
+    /// 설정 파일은 팬 회전수를 그대로 담고 있어서, 다른 맥(또는 팬이 교체된 맥)에서
+    /// 열면 커브가 그 팬의 범위를 벗어날 수 있다. 예를 들어 최대 4900rpm 으로 그린 커브를
+    /// 최대 2000rpm 인 맥에서 쓰면 곡선의 윗부분이 통째로 잘린다.
+    ///
+    /// 넘치는 경우에는 곡선 모양을 지키려고 비율로 줄이고, 모자라는 쪽은 최소값으로만 올린다.
+    /// (사용자가 일부러 좁은 범위로 그렸을 수 있어서 억지로 늘리지는 않는다.)
+    /// 바뀐 내용이 있으면 true 를 돌려준다.
+    @discardableResult
+    public mutating func adapt(to fans: [FanInfo]) -> Bool {
+        guard !fans.isEmpty else { return false }
+        var changed = false
+
+        for profileIndex in profiles.indices {
+            for settingIndex in profiles[profileIndex].fanSettings.indices {
+                let setting = profiles[profileIndex].fanSettings[settingIndex]
+                guard let fan = fans.first(where: { $0.index == setting.fanIndex }),
+                      fan.maxRPM > fan.minRPM else { continue }
+
+                switch setting.mode {
+                case .automatic:
+                    continue
+
+                case .fixed(let rpm):
+                    let clamped = min(max(rpm, fan.minRPM), fan.maxRPM)
+                    if abs(clamped - rpm) > 1 {
+                        profiles[profileIndex].fanSettings[settingIndex].mode = .fixed(rpm: clamped)
+                        changed = true
+                    }
+
+                case .curve(var curve):
+                    let highest = curve.points.map(\.rpm).max() ?? 0
+                    var points = curve.points
+
+                    if highest > fan.maxRPM {
+                        // 곡선 전체를 비율로 줄여 모양을 지킨다.
+                        let scale = (fan.maxRPM - fan.minRPM) / max(highest - fan.minRPM, 1)
+                        points = points.map {
+                            CurvePoint(temperature: $0.temperature,
+                                       rpm: fan.minRPM + ($0.rpm - fan.minRPM) * scale)
+                        }
+                    }
+                    // 최소 회전수보다 낮은 점만 끌어올린다.
+                    points = points.map {
+                        CurvePoint(temperature: $0.temperature,
+                                   rpm: min(max($0.rpm, fan.minRPM), fan.maxRPM))
+                    }
+
+                    if points != curve.points {
+                        curve.points = points
+                        profiles[profileIndex].fanSettings[settingIndex].mode = .curve(curve)
+                        changed = true
+                    }
+                }
+            }
+
+            // 이 맥에 없는 팬에 대한 설정은 치운다. 팬이 새로 생겼다면 자동으로 채운다.
+            let known = Set(fans.map(\.index))
+            let before = profiles[profileIndex].fanSettings.count
+            profiles[profileIndex].fanSettings.removeAll { !known.contains($0.fanIndex) }
+            for fan in fans where !profiles[profileIndex].fanSettings.contains(where: { $0.fanIndex == fan.index }) {
+                profiles[profileIndex].fanSettings.append(
+                    FanSetting(fanIndex: fan.index, mode: .automatic))
+            }
+            if profiles[profileIndex].fanSettings.count != before { changed = true }
+        }
+        return changed
     }
 
     public func encoded() throws -> Data {

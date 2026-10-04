@@ -45,10 +45,40 @@ struct ProfilesView: View {
             .toggleStyle(.switch)
 
             if let reason = model.snapshot?.autoSwitchReason {
-                StatusBadge(text: "자동 전환 중 · \(reason)", color: .accentColor, symbol: "wand.and.stars")
+                StatusBadge(text: L.t("자동 전환 중 · ", "Auto-switched · ") + reason,
+                            color: .accentColor, symbol: "wand.and.stars")
+            }
+
+            // 조건만 걸어 두고 이 스위치를 켜지 않으면 아무 일도 일어나지 않는다.
+            // 사용자가 "왜 안 바뀌지" 하고 헤매기 쉬운 지점이라 분명히 알려 준다.
+            if !(model.config?.autoSwitchEnabled ?? false), hasAnyTrigger {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                    Text(L.t("조건을 정해 두었지만 자동 전환이 꺼져 있어 적용되지 않습니다.",
+                             "Conditions are set, but automatic switching is off, so they do nothing."))
+                        .font(Theme.caption)
+                    Spacer()
+                    Button(L.t("켜기", "Turn on")) {
+                        guard var c = model.config else { return }
+                        c.autoSwitchEnabled = true
+                        model.apply(config: c)
+                    }
+                    .controlSize(.small)
+                }
+                .padding(9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
             }
         }
         .card()
+    }
+
+    /// 전환 조건이 하나라도 걸려 있는지.
+    private var hasAnyTrigger: Bool {
+        (model.config?.profiles ?? []).contains {
+            if case .manual = $0.trigger { return false }
+            return true
+        }
     }
 
     private func profileCard(_ profile: Profile) -> some View {
@@ -243,7 +273,16 @@ struct ProfilesView: View {
     }
 
     private func setTrigger(_ profile: Profile, _ trigger: ProfileTrigger) {
-        mutate(profile) { $0.trigger = trigger }
+        guard var config = model.config,
+              let index = config.profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        config.profiles[index].trigger = trigger
+
+        // 조건을 처음 거는 순간 자동 전환도 같이 켠다.
+        // 조건만 정해 두고 스위치를 켜지 않아 "안 되는데요" 가 되는 걸 막는다.
+        if case .manual = trigger {} else if !config.autoSwitchEnabled {
+            config.autoSwitchEnabled = true
+        }
+        model.apply(config: config)
     }
 
     private func rename(_ profile: Profile, to name: String) {

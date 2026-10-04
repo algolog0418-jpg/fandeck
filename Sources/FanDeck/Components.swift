@@ -212,49 +212,61 @@ struct StatTile: View {
 
 // MARK: - 스파크라인
 
+/// 작은 추이선.
+///
+/// 처음에는 Swift Charts 로 그렸는데, 대시보드에 6개를 띄우고 매초 값이 바뀌니
+/// 그것만으로 CPU 를 꽤 썼다. 축도 범례도 없는 선 하나를 그리는 데
+/// 차트 엔진을 통째로 돌릴 이유가 없어서 직접 그린다.
 struct Sparkline: View {
     let series: [(Date, Double)]
     var color: Color = .accentColor
     var filled = true
 
     var body: some View {
-        if series.count < 2 {
-            // 표본이 모이기 전엔 빈 줄 대신 기준선을 보여준다.
-            Rectangle()
-                .fill(color.opacity(0.15))
-                .frame(height: 1)
-                .frame(maxHeight: .infinity, alignment: .center)
-        } else {
+        Canvas { context, size in
+            guard series.count >= 2 else {
+                // 표본이 모이기 전에는 기준선만 그린다.
+                var line = Path()
+                line.move(to: CGPoint(x: 0, y: size.height / 2))
+                line.addLine(to: CGPoint(x: size.width, y: size.height / 2))
+                context.stroke(line, with: .color(color.opacity(0.2)), lineWidth: 1)
+                return
+            }
+
             let values = series.map(\.1)
             let lo = values.min() ?? 0
             let hi = values.max() ?? 1
-            // 변화가 거의 없을 때 선이 가운데서 요동치지 않도록 최소 폭을 준다.
+            // 값이 거의 변하지 않을 때 선이 가운데서 요동치지 않도록 최소 폭을 준다.
             let span = max(hi - lo, 0.5)
+            let top = hi + span * 0.15
+            let bottom = lo - span * 0.15
+            let range = max(top - bottom, 0.001)
 
-            Chart {
-                ForEach(Array(series.enumerated()), id: \.offset) { _, point in
-                    if filled {
-                        AreaMark(x: .value("시각", point.0), y: .value("값", point.1))
-                            .foregroundStyle(
-                                LinearGradient(colors: [color.opacity(0.35), color.opacity(0.02)],
-                                               startPoint: .top, endPoint: .bottom))
-                            .interpolationMethod(.monotone)
-                    }
-                    LineMark(x: .value("시각", point.0), y: .value("값", point.1))
-                        .foregroundStyle(color)
-                        .lineStyle(StrokeStyle(lineWidth: 1.6, lineCap: .round))
-                        .interpolationMethod(.monotone)
-                }
+            func point(_ index: Int) -> CGPoint {
+                let x = size.width * CGFloat(index) / CGFloat(values.count - 1)
+                let y = size.height * (1 - CGFloat((values[index] - bottom) / range))
+                return CGPoint(x: x, y: y)
             }
-            .chartYScale(domain: (lo - span * 0.15)...(hi + span * 0.15))
-            .chartXAxis(.hidden)
-            .chartYAxis(.hidden)
-            .chartLegend(.hidden)
-            // AreaMark 의 그라데이션은 기본적으로 프레임 밖까지 그려져서
-            // 카드 아래로 흘러내린다. 반드시 잘라내야 한다.
-            .chartPlotStyle { $0.clipped() }
-            .clipped()
+
+            var line = Path()
+            line.move(to: point(0))
+            for i in 1..<values.count { line.addLine(to: point(i)) }
+
+            if filled {
+                var area = line
+                area.addLine(to: CGPoint(x: size.width, y: size.height))
+                area.addLine(to: CGPoint(x: 0, y: size.height))
+                area.closeSubpath()
+                context.fill(area, with: .linearGradient(
+                    Gradient(colors: [color.opacity(0.35), color.opacity(0.02)]),
+                    startPoint: .zero,
+                    endPoint: CGPoint(x: 0, y: size.height)))
+            }
+
+            context.stroke(line, with: .color(color),
+                           style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
         }
+        .drawingGroup()
     }
 }
 

@@ -9,7 +9,7 @@
 import Foundation
 import Darwin
 
-let daemonVersion = "1.0.0"
+let daemonVersion = BuildInfo.full
 
 // MARK: - 로그
 
@@ -68,6 +68,12 @@ final class ConfigStore {
            let loaded = try? FanDeckConfig.decode(data) {
             config = loaded
             log("설정 파일을 불러왔습니다 (프로파일 \(loaded.profiles.count)개)")
+            // 저장된 커브가 이 맥의 팬 범위를 벗어날 수 있다(다른 맥에서 만든 설정 등).
+            if config.adapt(to: defaultFans) {
+                log("팬 회전 범위에 맞게 커브를 조정했습니다 "
+                    + defaultFans.map { "#\($0.index) \(Int($0.minRPM))~\(Int($0.maxRPM))rpm" }
+                        .joined(separator: ", "))
+            }
             // 새 버전에서 늘어난 설정 항목은 파일에 없다. 디코딩할 때 기본값으로 채워지지만
             // 그대로 두면 파일에는 계속 빠져 있어서, 앱에서 그 항목을 바꿔도
             // 저장된 적이 없는 것처럼 보인다. 불러오자마자 한 번 다시 써서 구조를 맞춘다.
@@ -470,7 +476,7 @@ guard getuid() == 0 else {
     exit(1)
 }
 
-log("fandeckd \(daemonVersion) 시작")
+log("fandeckd \(BuildInfo.version) (빌드 \(BuildInfo.build), \(BuildInfo.date)) 시작")
 
 do {
     try SMCService.shared.open()
