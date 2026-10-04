@@ -44,12 +44,15 @@ public struct StatusSnapshot: Codable, Hashable, Sendable {
     public let configRevision: Int
     /// 서비스가 아는 설정 구조의 판 번호.
     public let configSchema: Int
+    /// 조건이 풀려 되돌리기를 기다리는 중이면 남은 시간(초).
+    public let revertsInSeconds: Double?
 
     public init(daemonVersion: String, uptimeSeconds: Double, activeProfileID: UUID,
                 activeProfileName: String, isCritical: Bool, smcWritable: Bool,
                 fans: [FanInfo], runtime: [FanRuntimeState], autoSwitchReason: String?,
                 configRevision: Int = 0,
-                configSchema: Int = FanDeckConfig.schemaVersion) {
+                configSchema: Int = FanDeckConfig.schemaVersion,
+                revertsInSeconds: Double? = nil) {
         self.daemonVersion = daemonVersion
         self.uptimeSeconds = uptimeSeconds
         self.activeProfileID = activeProfileID
@@ -61,6 +64,7 @@ public struct StatusSnapshot: Codable, Hashable, Sendable {
         self.autoSwitchReason = autoSwitchReason
         self.configRevision = configRevision
         self.configSchema = configSchema
+        self.revertsInSeconds = revertsInSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -78,6 +82,7 @@ public struct StatusSnapshot: Codable, Hashable, Sendable {
         configRevision = try c.decodeIfPresent(Int.self, forKey: .configRevision) ?? 0
         // 이 값을 보내지 않는 옛 서비스는 구버전으로 본다.
         configSchema = try c.decodeIfPresent(Int.self, forKey: .configSchema) ?? 0
+        revertsInSeconds = try c.decodeIfPresent(Double.self, forKey: .revertsInSeconds)
     }
 }
 

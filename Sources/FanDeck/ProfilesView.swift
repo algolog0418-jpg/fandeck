@@ -45,10 +45,46 @@ struct ProfilesView: View {
             .toggleStyle(.switch)
 
             if (model.config?.autoSwitchEnabled ?? false), hasAnyTrigger {
-                Text(L.t("여러 조건이 동시에 맞으면 온도 기준이 가장 높은 프로파일이 쓰입니다. 앱 조건은 온도 조건보다 먼저입니다.",
-                         "When several conditions match, the profile with the highest temperature threshold wins. App conditions take precedence over temperature ones."))
+                Text(L.t("여러 조건이 동시에 맞으면 온도 기준이 가장 높은 프로파일이 쓰입니다. 앱 조건은 온도 조건보다 먼저입니다.\n조건이 모두 풀리면 원래 쓰던 프로파일로 돌아갑니다(기준보다 5°C 더 식은 뒤).",
+                         "When several conditions match, the profile with the highest temperature threshold wins; app conditions take precedence over temperature ones.\nWhen no condition matches any more, the previous profile is restored — once it has cooled 5°C below the threshold."))
                     .font(Theme.caption).foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if (model.config?.autoSwitchEnabled ?? false) {
+                Divider()
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L.t("원래대로 돌아가기까지", "Wait before returning"))
+                            .font(.system(size: 12))
+                        Text(L.t("온도가 내려간 뒤 이만큼 유지되어야 되돌립니다. 잠깐 식었다고 바로 내려가면 곧 다시 올라가게 됩니다.",
+                                 "The machine must stay cool this long before switching back. Reverting immediately would just bounce when work resumes."))
+                            .font(Theme.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { model.config?.autoRevertDelaySeconds ?? 300 },
+                        set: { newValue in
+                            guard var c = model.config else { return }
+                            c.autoRevertDelaySeconds = newValue
+                            model.apply(config: c)
+                        })) {
+                        Text(L.t("바로", "Now")).tag(0.0)
+                        Text(L.t("1분", "1 min")).tag(60.0)
+                        Text(L.t("3분", "3 min")).tag(180.0)
+                        Text(L.t("5분", "5 min")).tag(300.0)
+                        Text(L.t("10분", "10 min")).tag(600.0)
+                    }
+                    .labelsHidden().frame(width: 230).pickerStyle(.segmented)
+                }
+            }
+
+            // 되돌리기를 기다리는 중이면 얼마나 남았는지 보여 준다.
+            if let remaining = model.snapshot?.revertsInSeconds, remaining > 0 {
+                StatusBadge(text: L.t("\(Int(remaining.rounded()))초 뒤 원래대로",
+                                      "Returning in \(Int(remaining.rounded()))s"),
+                            color: .orange, symbol: "clock.arrow.circlepath")
             }
 
             if let reason = model.snapshot?.autoSwitchReason {

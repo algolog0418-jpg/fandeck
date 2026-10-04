@@ -105,7 +105,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
     /// 읽고 쓰기 때문에, 앱만 새로 깔면 새 항목이 조용히 사라진다.
     /// 앱은 이 번호를 서비스가 보내 준 값과 비교해서 그 상황을 알아챈다.
     /// (바이너리 크기 비교는 관계없는 변경에도 반응해서 쓸 수 없었다.)
-    public static let schemaVersion = 4
+    public static let schemaVersion = 5
 
     public var version: Int
     public var activeProfileID: UUID
@@ -115,6 +115,11 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
     public var tickInterval: Double
     /// 자동 전환 규칙 사용 여부.
     public var autoSwitchEnabled: Bool
+    /// 조건이 풀린 뒤 원래 프로파일로 돌아가기까지 기다리는 시간(초).
+    ///
+    /// 온도가 잠깐 내려갔다고 바로 되돌리면, 작업이 이어질 때 곧장 다시 올라가야 해서
+    /// 팬이 오르락내리락한다. 식은 상태가 이만큼 이어져야 비로소 되돌린다.
+    public var autoRevertDelaySeconds: Double
     /// 메뉴바에 표시할 센서.
     public var menuBarSensorKey: String
     public var menuBarShowsFan: Bool
@@ -167,6 +172,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
                 safety: SafetySettings = SafetySettings(),
                 tickInterval: Double = 1.0,
                 autoSwitchEnabled: Bool = false,
+                autoRevertDelaySeconds: Double = 300,
                 menuBarSensorKey: String = SensorCatalog.cpuMaxKey,
                 menuBarShowsFan: Bool = true,
                 menuBarShowsTemperature: Bool = true,
@@ -196,6 +202,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
         self.safety = safety
         self.tickInterval = tickInterval
         self.autoSwitchEnabled = autoSwitchEnabled
+        self.autoRevertDelaySeconds = autoRevertDelaySeconds
         self.menuBarSensorKey = menuBarSensorKey
         self.menuBarShowsFan = menuBarShowsFan
         self.menuBarShowsTemperature = menuBarShowsTemperature
@@ -224,6 +231,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
         safety = try c.decodeIfPresent(SafetySettings.self, forKey: .safety) ?? SafetySettings()
         tickInterval = try c.decodeIfPresent(Double.self, forKey: .tickInterval) ?? 1.0
         autoSwitchEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoSwitchEnabled) ?? false
+        autoRevertDelaySeconds = try c.decodeIfPresent(Double.self, forKey: .autoRevertDelaySeconds) ?? 300
         menuBarSensorKey = try c.decodeIfPresent(String.self, forKey: .menuBarSensorKey) ?? SensorCatalog.cpuMaxKey
         menuBarShowsFan = try c.decodeIfPresent(Bool.self, forKey: .menuBarShowsFan) ?? true
         menuBarShowsTemperature = try c.decodeIfPresent(Bool.self, forKey: .menuBarShowsTemperature) ?? true

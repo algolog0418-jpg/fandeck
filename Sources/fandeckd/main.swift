@@ -171,6 +171,19 @@ final class ControlLoop {
     private var runtimeStates: [Int: FanRuntimeState] = [:]
     private var criticalFlag = false
     private var autoSwitchReason: String?
+    /// 자동 전환이 끼어들기 전에 쓰고 있던 프로파일.
+    /// 조건이 모두 풀리면 여기로 돌아간다.
+    private var autoBaseProfileID: UUID?
+    /// 자동으로 바뀐 프로파일에서 내려올 때 필요한 여유(°C).
+    ///
+    /// 조건이 65도이면 64.9도에서 바로 내려오는데, 온도는 그 근처에서 계속 오르내려서
+    /// 프로파일이 쉴 새 없이 바뀌고 팬 소리도 함께 들썩인다. 올라갈 때보다
+    /// 내려올 때 더 식어야 풀리도록 한다.
+    private let releaseMargin: Double = 5
+    /// 조건이 풀린 시각. 여기서부터 설정한 시간이 지나야 되돌린다.
+    private var conditionsClearedAt: Date?
+    /// 되돌리기까지 남은 시간(초). 화면에 보여 주기 위한 값.
+    private var revertsIn: Double?
     private(set) var smcWritable = false
     /// 슬라이더로 임시 지정한 모드. 프로파일을 바꾸면 사라진다.
     private var overrides: [Int: FanMode] = [:]
@@ -207,6 +220,14 @@ final class ControlLoop {
     /// 자동 전환 규칙을 평가해 활성 프로파일을 바꾼다.
     private func evaluateAutoSwitch(config: inout FanDeckConfig) {
         guard config.autoSwitchEnabled else {
+            // 자동 전환을 꺼 두면, 자동으로 바꿔 놨던 것도 원래대로 돌려준다.
+            if let base = autoBaseProfileID {
+                config.activeProfileID = base
+                autoBaseProfileID = nil
+                conditionsClearedAt = nil
+                stateLock.lock(); revertsIn = nil; stateLock.unlock()
+                log("자동 전환이 꺼져 원래 프로파일로 돌아갑니다")
+            }
             if autoSwitchReason != nil {
                 stateLock.lock(); autoSwitchReason = nil; stateLock.unlock()
             }
@@ -236,7 +257,11 @@ final class ControlLoop {
                 }
 
             case .sensorAbove(let key, let threshold):
-                if let value = sensorValue(key), value > threshold {
+                guard let value = sensorValue(key) else { continue }
+                // 이미 이 프로파일로 바뀌어 있으면 조금 식었다고 바로 내려오지 않는다.
+                let isCurrentlyAuto = autoBaseProfileID != nil && profile.id == config.activeProfileID
+                let effective = isCurrentlyAuto ? threshold - releaseMargin : threshold
+                if value > effective {
                     candidates.append((profile,
                                        "\(key) \(String(format: "%.0f", value))°C > \(Int(threshold))°C",
                                        threshold, false))
@@ -256,14 +281,45 @@ final class ControlLoop {
             return a.threshold < b.threshold
         }.map { ($0.profile, $0.reason) }
 
-        if let (profile, reason) = best, config.activeProfileID != profile.id {
-            config.activeProfileID = profile.id
-            overrides.removeAll()
-            engines.values.forEach { $0.reset() }
-            log("자동 전환: \(profile.name) (\(reason))")
+        if let (profile, reason) = best {
+            // 다시 조건이 맞았으니 되돌리기 대기는 없던 일로 한다.
+            conditionsClearedAt = nil
+            stateLock.lock(); revertsIn = nil; stateLock.unlock()
+            // 처음 끼어드는 순간의 프로파일을 기억해 둔다. 나중에 여기로 돌아온다.
+            if autoBaseProfileID == nil { autoBaseProfileID = config.activeProfileID }
+            if config.activeProfileID != profile.id {
+                config.activeProfileID = profile.id
+                overrides.removeAll()
+                engines.values.forEach { $0.reset() }
+                log("자동 전환: \(profile.name) (\(reason))")
+            }
             stateLock.lock(); autoSwitchReason = reason; stateLock.unlock()
-        } else if best == nil {
-            stateLock.lock(); autoSwitchReason = nil; stateLock.unlock()
+        } else if let base = autoBaseProfileID {
+            // 조건이 풀렸다. 다만 곧바로 되돌리지는 않는다.
+            // 잠깐 식었을 뿐일 수 있어서, 식은 상태가 설정한 시간만큼 이어져야 되돌린다.
+            let clearedAt = conditionsClearedAt ?? Date()
+            conditionsClearedAt = clearedAt
+            let waited = Date().timeIntervalSince(clearedAt)
+            let delay = max(config.autoRevertDelaySeconds, 0)
+
+            if waited >= delay {
+                autoBaseProfileID = nil
+                conditionsClearedAt = nil
+                if config.activeProfileID != base {
+                    config.activeProfileID = base
+                    overrides.removeAll()
+                    engines.values.forEach { $0.reset() }
+                    let name = config.profiles.first { $0.id == base }?.name ?? "?"
+                    log("조건이 풀린 지 \(Int(delay))초가 지나 원래 프로파일로 돌아갑니다: \(name)")
+                }
+                stateLock.lock(); autoSwitchReason = nil; revertsIn = nil; stateLock.unlock()
+            } else {
+                let remaining = delay - waited
+                stateLock.lock(); revertsIn = remaining; stateLock.unlock()
+            }
+        } else {
+            conditionsClearedAt = nil
+            stateLock.lock(); autoSwitchReason = nil; revertsIn = nil; stateLock.unlock()
         }
     }
 
@@ -362,6 +418,7 @@ final class ControlLoop {
         let states = Array(runtimeStates.values).sorted { $0.fanIndex < $1.fanIndex }
         let critical = criticalFlag
         let reason = autoSwitchReason
+        let reverts = revertsIn
         stateLock.unlock()
 
         return StatusSnapshot(
@@ -375,7 +432,8 @@ final class ControlLoop {
             runtime: states,
             autoSwitchReason: reason,
             configRevision: store.currentRevision(),
-            configSchema: FanDeckConfig.schemaVersion)
+            configSchema: FanDeckConfig.schemaVersion,
+            revertsInSeconds: reverts)
     }
 
     func setOverride(fanIndex: Int, mode: FanMode) {
@@ -386,6 +444,14 @@ final class ControlLoop {
     func clearOverrides() {
         overrides.removeAll()
         engines.values.forEach { $0.reset() }
+    }
+
+    /// 사용자가 직접 프로파일을 골랐을 때 부른다.
+    /// 그 선택이 새 기준이 되어야, 조건이 풀렸을 때 엉뚱한 프로파일로 돌아가지 않는다.
+    func forgetAutoBase() {
+        autoBaseProfileID = nil
+        conditionsClearedAt = nil
+        stateLock.lock(); revertsIn = nil; stateLock.unlock()
     }
 
     /// 모든 팬을 시스템 자동으로 돌려놓는다. 종료 경로에서 반드시 호출된다.
@@ -550,6 +616,7 @@ let server = SocketServer(path: FanDeckPaths.socketPath) { request in
         }
         config.activeProfileID = id
         store.update(config)
+        loop.forgetAutoBase()
         loop.clearOverrides()
         log("프로파일 전환: \(config.activeProfile?.name ?? "?")")
         return .ok
