@@ -31,6 +31,7 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 290)
+        .id(model.language)
         .onAppear { model.isMenuOpen = true }
         .onDisappear { model.isMenuOpen = false }
     }
@@ -42,9 +43,9 @@ struct MenuBarView: View {
             Text("FanDeck").font(.system(size: 13, weight: .semibold))
             Spacer()
             if model.snapshot?.isCritical == true {
-                StatusBadge(text: "과열 보호", color: .red, symbol: "exclamationmark.triangle.fill", pulsing: true)
+                StatusBadge(text: L.t("과열 보호", "Thermal protection"), color: .red, symbol: "exclamationmark.triangle.fill", pulsing: true)
             } else if !model.daemonAvailable {
-                StatusBadge(text: "제어 꺼짐", color: .orange)
+                StatusBadge(text: L.t("제어 꺼짐", "Control off"), color: .orange)
             }
         }
     }
@@ -94,7 +95,7 @@ struct MenuBarView: View {
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                             .frame(width: 14)
-                        Text(d.name).font(.system(size: 11))
+                        Text(d.displayName).font(.system(size: 11))
                         Spacer()
                         Text(model.display(v, unit: d.unit))
                             .font(Theme.numeric(12))
@@ -115,7 +116,7 @@ struct MenuBarView: View {
 
     private var profileSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("모드").font(Theme.label).foregroundStyle(.secondary)
+            Text(L.t("모드", "Mode")).font(Theme.label).foregroundStyle(.secondary)
             ForEach(model.config?.profiles ?? []) { profile in
                 Button {
                     model.activate(profile: profile)
@@ -127,7 +128,7 @@ struct MenuBarView: View {
                             .foregroundStyle(profile.id == model.config?.activeProfileID
                                              ? Color.accentColor : .secondary)
                             .frame(width: 14)
-                        Text(profile.name).font(.system(size: 11))
+                        Text(profile.displayName).font(.system(size: 11))
                         Spacer()
                     }
                     .contentShape(Rectangle())
@@ -144,7 +145,7 @@ struct MenuBarView: View {
                 model.presentMainWindow()
                 openWindow(id: "main")
             } label: {
-                Label("창 열기", systemImage: "macwindow")
+                Label(L.t("창 열기", "Open window"), systemImage: "macwindow")
                     .font(.system(size: 11))
             }
             .buttonStyle(.plain)
@@ -154,7 +155,7 @@ struct MenuBarView: View {
             Button {
                 NSApp.terminate(nil)
             } label: {
-                Text("종료").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(L.t("종료", "Quit")).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
         }

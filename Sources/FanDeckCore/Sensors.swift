@@ -33,7 +33,7 @@ public enum TemperatureUnit: String, Codable, Sendable, CaseIterable {
     }
 
     public var localizedName: String {
-        self == .celsius ? "섭씨 (°C)" : "화씨 (°F)"
+        self == .celsius ? L.t("섭씨 (°C)", "Celsius (°C)") : L.t("화씨 (°F)", "Fahrenheit (°F)")
     }
 }
 
@@ -102,6 +102,9 @@ public enum SensorUnit: String, Codable, Sendable {
 public enum SensorGroup: String, Codable, CaseIterable, Sendable {
     case cpuPerformance, cpuEfficiency, cpu, gpu, memory, storage
     case power, voltage, current, powerStage, ambient, wireless, thermalZone, other
+
+    /// 설정한 언어에 맞는 그룹 이름.
+    public var displayName: String { L.t(localizedName, englishName) }
 
     public var localizedName: String {
         switch self {
@@ -182,6 +185,12 @@ public struct SensorDescriptor: Identifiable, Hashable, Codable, Sendable {
     public enum Aggregation: String, Codable, Sendable { case raw, average, maximum }
 
     public var id: String { key }
+
+    /// 설정한 언어에 맞는 이름.
+    ///
+    /// 센서 이름에는 "성능 코어 1" 처럼 번호가 섞여 있어서 통째로는 번역표에서
+    /// 찾을 수 없다. 전체가 안 맞으면 아는 낱말만 바꿔 끼운다.
+    public var displayName: String { L.translateName(name, fallback: englishName) }
 
     public init(key: String, name: String, englishName: String, group: SensorGroup,
                 unit: SensorUnit = .celsius, isSynthetic: Bool = false,

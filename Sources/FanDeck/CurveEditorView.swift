@@ -16,7 +16,16 @@ struct CurveEditorView: View {
     @Bindable var model: AppModel
     @StateObject private var ui = CurveEditorState()
 
+    /// 커브는 언제나 섭씨로 저장한다. 화씨 설정일 때는 보여줄 때만 바꾼다.
+    /// (저장값을 단위마다 다르게 두면 설정을 바꿀 때 커브가 망가진다.)
     private let temperatureRange: ClosedRange<Double> = 20...105
+
+    private var unit: TemperatureUnit { model.config?.temperatureUnit ?? .celsius }
+
+    /// 섭씨 값을 화면에 띄울 문자열로.
+    private func tempLabel(_ celsius: Double, decimals: Int = 0) -> String {
+        String(format: "%.\(decimals)f", unit.convert(celsius)) + unit.suffix
+    }
 
     private var fan: FanInfo? { model.activeFan }
 
@@ -42,7 +51,7 @@ struct CurveEditorView: View {
                         smoothingCard
                     }
                 } else {
-                    ContentUnavailableView("팬이 없습니다", systemImage: "fan.slash")
+                    ContentUnavailableView(L.t("팬이 없습니다", "No fan"), systemImage: "fan.slash")
                 }
             }
             .padding(Theme.gridSpacing)
@@ -54,13 +63,24 @@ struct CurveEditorView: View {
     private var header: some View {
         VStack(spacing: 12) {
             SectionHeader(
-                title: "팬 커브",
-                subtitle: model.config?.activeProfile.map { "편집 중: \($0.name)" } ?? "")
+                title: L.t("팬 커브", "Fan curve"),
+                subtitle: model.config?.activeProfile.map {
+                    model.fans.count > 1
+                        ? L.t("편집 중: ", "Editing: ") + $0.displayName + " · " + (model.activeFan?.name ?? "")
+                        : L.t("편집 중: ", "Editing: ") + $0.displayName
+                } ?? "")
+
+            if model.fans.count > 1 {
+                Picker("", selection: $model.selectedFanIndex) {
+                    ForEach(model.fans) { f in Text(f.name).tag(f.index) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
 
             if let profile = model.config?.activeProfile, profile.isBuiltIn {
                 HStack(spacing: 8) {
                     Image(systemName: "lock.fill").font(.system(size: 10)).foregroundStyle(.secondary)
-                    Text("내장 프로파일입니다. 수정하면 자동으로 복사본이 만들어집니다.")
+                    Text(L.t("내장 프로파일입니다. 수정하면 자동으로 복사본이 만들어집니다.", "Built-in profile — editing creates a copy automatically."))
                         .font(Theme.caption).foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -68,9 +88,9 @@ struct CurveEditorView: View {
 
             HStack(spacing: 10) {
                 Picker("제어 방식", selection: modeSelection) {
-                    Text("시스템 자동").tag(0)
-                    Text("RPM 고정").tag(1)
-                    Text("센서 연동 커브").tag(2)
+                    Text(L.t("시스템 자동", "System automatic")).tag(0)
+                    Text(L.t("RPM 고정", "Fixed RPM")).tag(1)
+                    Text(L.t("센서 연동 커브", "Sensor curve")).tag(2)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -78,7 +98,7 @@ struct CurveEditorView: View {
                 if curve != nil {
                     Picker("기준 센서", selection: sensorSelection) {
                         ForEach(temperatureSensors, id: \.key) { d in
-                            Text(d.name).tag(d.key)
+                            Text(d.displayName).tag(d.key)
                         }
                     }
                     .frame(maxWidth: 220)
@@ -136,9 +156,9 @@ struct CurveEditorView: View {
     private func graphCard(fan: FanInfo) -> some View {
         VStack(spacing: 10) {
             SectionHeader(
-                title: "커브 그래프",
-                subtitle: curve == nil ? "센서 연동을 선택하면 곡선을 직접 그릴 수 있습니다"
-                                       : "점을 끌어 옮기고, 빈 곳을 두 번 눌러 점을 추가하세요")
+                title: L.t("커브 그래프", "Curve"),
+                subtitle: curve == nil ? L.t("센서 연동을 선택하면 곡선을 직접 그릴 수 있습니다", "Choose Sensor curve to draw your own")
+                                       : L.t("점을 끌어 옮기고, 빈 곳을 두 번 눌러 점을 추가하세요", "Drag points, double-click empty space to add"))
 
             GeometryReader { geo in
                 let plot = CGRect(x: 42, y: 10,
@@ -160,9 +180,9 @@ struct CurveEditorView: View {
             .frame(height: 300)
 
             HStack(spacing: 14) {
-                legendItem(color: .accentColor, text: "설정한 커브")
-                legendItem(color: .orange, text: "현재 온도")
-                legendItem(color: Theme.fanColor(fan.loadFraction), text: "실제 팬 속도")
+                legendItem(color: .accentColor, text: L.t("설정한 커브", "Your curve"))
+                legendItem(color: .orange, text: L.t("현재 온도", "Current temp"))
+                legendItem(color: Theme.fanColor(fan.loadFraction), text: L.t("실제 팬 속도", "Actual fan speed"))
                 Spacer()
             }
         }
@@ -208,7 +228,7 @@ struct CurveEditorView: View {
                 line.move(to: CGPoint(x: px, y: plot.minY))
                 line.addLine(to: CGPoint(x: px, y: plot.maxY))
                 ctx.stroke(line, with: .color(.secondary.opacity(0.09)), lineWidth: 1)
-                ctx.draw(Text("\(Int(t))°").font(Theme.caption).foregroundStyle(.tertiary),
+                ctx.draw(Text(tempLabel(t)).font(Theme.caption).foregroundStyle(.tertiary),
                          at: CGPoint(x: px, y: plot.maxY + 12))
             }
             for i in 0...4 {
@@ -281,7 +301,7 @@ struct CurveEditorView: View {
                     .frame(width: 13, height: 13)
                     .position(x: px, y: actualY)
 
-                Text("\(Int(temperature))°C")
+                Text(tempLabel(temperature))
                     .font(Theme.numeric(10))
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(Capsule().fill(Color.orange.opacity(0.9)))
@@ -314,7 +334,7 @@ struct CurveEditorView: View {
                         }
                         .onEnded { _ in ui.draggingIndex = nil }
                 )
-                .help("\(Int(point.temperature))°C → \(Int(point.rpm))rpm")
+                .help("\(tempLabel(point.temperature)) → \(Int(point.rpm))rpm")
         }
     }
 
@@ -365,7 +385,7 @@ struct CurveEditorView: View {
 
     private var pointsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "커브 점", subtitle: "숫자로 정확히 맞출 수도 있습니다")
+            SectionHeader(title: L.t("커브 점", "Curve points"), subtitle: L.t("숫자로 정확히 맞출 수도 있습니다", "You can also set exact numbers"))
 
             if let curve, let fan {
                 ForEach(Array(curve.points.sorted().enumerated()), id: \.offset) { index, point in
@@ -376,9 +396,9 @@ struct CurveEditorView: View {
                             .background(Circle().fill(Color.accentColor.opacity(0.18)))
 
                         Stepper(value: temperatureBinding(index: index), in: 20...105, step: 1) {
-                            Text("\(Int(point.temperature))°C")
+                            Text(tempLabel(point.temperature))
                                 .font(Theme.numeric(12))
-                                .frame(width: 54, alignment: .leading)
+                                .frame(width: 62, alignment: .leading)
                         }
 
                         Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(.tertiary)
@@ -420,7 +440,7 @@ struct CurveEditorView: View {
                         c.points.sort()
                         updateMode(.curve(c))
                     } label: {
-                        Label("점 추가", systemImage: "plus")
+                        Label(L.t("점 추가", "Add point"), systemImage: "plus")
                     }
 
                     Button {
@@ -430,7 +450,7 @@ struct CurveEditorView: View {
                                                          maxRPM: fan.maxRPM).points
                         updateMode(.curve(c))
                     } label: {
-                        Label("기본값으로", systemImage: "arrow.counterclockwise")
+                        Label(L.t("기본값으로", "Reset"), systemImage: "arrow.counterclockwise")
                     }
                     Spacer()
                 }
@@ -472,22 +492,26 @@ struct CurveEditorView: View {
 
     private var smoothingCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "소음 완충",
-                          subtitle: "팬 속도가 들쭉날쭉 변해서 거슬리는 걸 막아줍니다")
+            SectionHeader(title: L.t("소음 완충", "Noise smoothing"),
+                          subtitle: L.t("팬 속도가 들쭉날쭉 변해서 거슬리는 걸 막아줍니다", "Keeps fan speed from jumping around"))
 
             if model.config?.activeProfile != nil {
-                slider("온도 평활", value: smoothingBinding(\.temperatureSmoothing),
+                slider(L.t("온도 평활", "Temperature smoothing"), value: smoothingBinding(\.temperatureSmoothing),
                        range: 0.05...1.0, format: { String(format: "%.2f", $0) },
-                       help: "낮을수록 순간적인 온도 변화를 무시합니다")
-                slider("히스테리시스", value: smoothingBinding(\.hysteresis),
-                       range: 0...12, format: { "\(Int($0))°C" },
-                       help: "온도가 이만큼 떨어져야 속도를 낮춥니다")
-                slider("상승 속도 제한", value: smoothingBinding(\.rampUpPerSecond),
+                       help: L.t("낮을수록 순간적인 온도 변화를 무시합니다", "Lower ignores brief spikes"))
+                slider(L.t("히스테리시스", "Hysteresis"), value: smoothingBinding(\.hysteresis),
+                       // 히스테리시스는 "차이" 라서 화씨에서는 1.8배로 환산해야 뜻이 맞는다.
+                       range: 0...12,
+                       format: { [unit] v in
+                           unit == .celsius ? "\(Int(v))°C" : String(format: "%.1f°F", v * 9 / 5)
+                       },
+                       help: L.t("온도가 이만큼 떨어져야 속도를 낮춥니다", "Temperature must drop this much before slowing down"))
+                slider(L.t("상승 속도 제한", "Ramp-up limit"), value: smoothingBinding(\.rampUpPerSecond),
                        range: 50...2000, format: { "\(Int($0)) rpm/초" },
-                       help: "팬이 갑자기 빨라지지 않게 합니다")
-                slider("하강 속도 제한", value: smoothingBinding(\.rampDownPerSecond),
+                       help: L.t("팬이 갑자기 빨라지지 않게 합니다", "Prevents sudden speed-ups"))
+                slider(L.t("하강 속도 제한", "Ramp-down limit"), value: smoothingBinding(\.rampDownPerSecond),
                        range: 20...2000, format: { "\(Int($0)) rpm/초" },
-                       help: "팬이 갑자기 느려지지 않게 합니다")
+                       help: L.t("팬이 갑자기 느려지지 않게 합니다", "Prevents sudden slow-downs"))
             }
         }
         .card()
@@ -533,7 +557,7 @@ struct CurveEditorView: View {
         guard profile.isBuiltIn else { return profile }
         var copy = profile
         copy.id = UUID()
-        copy.name = profile.name + " (사용자)"
+        copy.name = profile.displayName + L.t(" (사용자)", " (custom)")
         copy.isBuiltIn = false
         config.profiles.append(copy)
         return copy

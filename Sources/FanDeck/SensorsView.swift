@@ -22,7 +22,7 @@ struct SensorsView: View {
             return d.name.lowercased().contains(query)
                 || d.englishName.lowercased().contains(query)
                 || d.key.lowercased().contains(query)
-                || d.group.localizedName.lowercased().contains(query)
+                || d.group.displayName.lowercased().contains(query)
         }
     }
 
@@ -62,7 +62,7 @@ struct SensorsView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                TextField("센서 이름이나 SMC 키로 검색", text: $model.sensorSearch)
+                TextField(L.t("센서 이름이나 SMC 키로 검색", "Search by sensor name or SMC key"), text: $model.sensorSearch)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                 if !model.sensorSearch.isEmpty {
@@ -79,7 +79,7 @@ struct SensorsView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
 
             Toggle(isOn: $ui.showOnlyFavorites) {
-                Label("즐겨찾기만", systemImage: "star.fill")
+                Label(L.t("즐겨찾기만", "Favorites only"), systemImage: "star.fill")
                     .font(.system(size: 11))
             }
             .toggleStyle(.button)
@@ -110,7 +110,7 @@ struct SensorsView: View {
                     Image(systemName: group.symbolName)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-                    Text(group.localizedName)
+                    Text(group.displayName)
                         .font(.system(size: 12, weight: .semibold))
                     Text("\(items.count)")
                         .font(Theme.caption)
@@ -144,6 +144,6 @@ struct SensorsView: View {
     private func groupSummary(_ items: [SensorDescriptor]) -> String? {
         let values = items.compactMap { model.reading($0.key) }
         guard let maximum = values.max(), let unit = items.first?.unit else { return nil }
-        return "최고 " + model.display(maximum, unit: unit)
+        return L.t("최고 ", "max ") + model.display(maximum, unit: unit)
     }
 }

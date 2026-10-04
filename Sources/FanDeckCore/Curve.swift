@@ -73,17 +73,17 @@ public enum FanMode: Codable, Hashable, Sendable {
 
     public var label: String {
         switch self {
-        case .automatic:       return "자동"
-        case .fixed(let rpm):  return "\(Int(rpm)) rpm 고정"
-        case .curve:           return "센서 연동"
+        case .automatic:       return L.t("자동", "Automatic")
+        case .fixed(let rpm):  return L.t("\(Int(rpm)) rpm 고정", "Fixed \(Int(rpm)) rpm")
+        case .curve:           return L.t("센서 연동", "Sensor curve")
         }
     }
 
     public var shortLabel: String {
         switch self {
-        case .automatic: return "자동"
-        case .fixed:     return "고정"
-        case .curve:     return "커브"
+        case .automatic: return L.t("자동", "Auto")
+        case .fixed:     return L.t("고정", "Fixed")
+        case .curve:     return L.t("커브", "Curve")
         }
     }
 }

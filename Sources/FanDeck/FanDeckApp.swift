@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 창을 모두 닫아도 앱은 메뉴 막대에 남는다.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// 끄기 전에 미뤄 둔 설정 변경을 저장한다.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { AppModel.shared.flushPendingConfig() }
+    }
+
     /// Dock 아이콘이나 Launchpad 로 다시 열었을 때 창을 띄운다.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
@@ -88,6 +93,9 @@ struct MainWindow: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        // 언어는 전역 값이라 바뀌어도 SwiftUI 가 다시 그리지 않는다.
+        // 여기에 묶어 두면 언어가 달라질 때 화면이 통째로 새로 만들어진다.
+        .id(model.language)
         .background(.background)
     }
 
@@ -111,15 +119,17 @@ struct MainWindow: View {
                     Image(systemName: "cpu")
                         .font(.system(size: 10))
                         .foregroundStyle(Theme.temperatureColor(v))
-                    Text(String(format: "%.0f°C", v))
+                    // 설정한 온도 단위를 따라야 한다. 예전에는 섭씨로 고정돼 있어서
+                    // 화씨로 바꿔도 이 자리만 섭씨로 남았다.
+                    Text(model.format.compactString(v, unit: .celsius))
                         .font(Theme.numeric(11))
                 }
             }
 
             if model.daemonAvailable {
-                StatusBadge(text: model.snapshot?.activeProfileName ?? "—", color: .accentColor)
+                StatusBadge(text: model.activeProfileDisplayName, color: .accentColor)
             } else {
-                StatusBadge(text: "제어 꺼짐", color: .orange)
+                StatusBadge(text: L.t("제어 꺼짐", "Control off"), color: .orange)
             }
         }
         .padding(.horizontal, 14)

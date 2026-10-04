@@ -47,14 +47,25 @@ struct DashboardView: View {
     private var fanCard: some View {
         VStack(spacing: 14) {
             if let fan {
+                // 팬이 여러 개인 맥(맥북 프로 등)에서는 어느 팬을 볼지 고를 수 있어야 한다.
+                if model.fans.count > 1 {
+                    Picker("", selection: $model.selectedFanIndex) {
+                        ForEach(model.fans) { f in
+                            Text(f.name).tag(f.index)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
                 HStack {
                     Text(fan.name).font(.system(size: 13, weight: .semibold))
                     Spacer()
                     if model.snapshot?.isCritical == true {
-                        StatusBadge(text: "과열 보호", color: .red,
+                        StatusBadge(text: L.t("과열 보호", "Thermal protection"), color: .red,
                                     symbol: "exclamationmark.triangle.fill", pulsing: true)
                     } else {
-                        StatusBadge(text: runtime?.modeLabel ?? "자동",
+                        StatusBadge(text: model.modeLabel(for: fan.index),
                                     color: Theme.fanColor(fan.loadFraction))
                     }
                 }
@@ -64,15 +75,15 @@ struct DashboardView: View {
                 let db = NoiseEstimator.estimatedDB(rpm: fan.currentRPM,
                                                     minRPM: fan.minRPM, maxRPM: fan.maxRPM)
                 HStack(spacing: 0) {
-                    metric("최소", "\(Int(fan.minRPM))")
+                    metric(L.t("최소", "Min"), "\(Int(fan.minRPM))")
                     Divider().frame(height: 26)
-                    metric("체감 소음", "\(Int(db))dB", caption: NoiseEstimator.label(forDB: db))
+                    metric(L.t("체감 소음", "Noise"), "\(Int(db))dB", caption: NoiseEstimator.label(forDB: db))
                     Divider().frame(height: 26)
-                    metric("최대", "\(Int(fan.maxRPM))")
+                    metric(L.t("최대", "Max"), "\(Int(fan.maxRPM))")
                 }
             } else {
-                ContentUnavailableView("팬을 찾을 수 없습니다", systemImage: "fan.slash",
-                                       description: Text("이 맥에는 제어할 수 있는 팬이 없을 수 있습니다."))
+                ContentUnavailableView(L.t("팬을 찾을 수 없습니다", "No fan found"), systemImage: "fan.slash",
+                                       description: Text(L.t("이 맥에는 제어할 수 있는 팬이 없을 수 있습니다.", "This Mac may have no controllable fan.")))
                     .frame(height: 220)
             }
         }
@@ -100,7 +111,7 @@ struct DashboardView: View {
             ForEach(keys, id: \.self) { key in
                 if let d = model.descriptor(key) {
                     let value = model.reading(key)
-                    StatTile(title: d.name,
+                    StatTile(title: d.displayName,
                              value: value.map { model.display($0, unit: d.unit) } ?? "—",
                              color: value.map { Theme.accent(for: d.unit, value: $0) } ?? .secondary,
                              symbol: d.group.symbolName,
@@ -118,17 +129,17 @@ struct DashboardView: View {
 
     private var quickControl: some View {
         VStack(spacing: 12) {
-            SectionHeader(title: "빠른 제어",
+            SectionHeader(title: L.t("빠른 제어", "Quick control"),
                           subtitle: model.daemonAvailable
-                            ? "사용 중인 모드: \(model.snapshot?.activeProfileName ?? "—")"
-                            : "팬 제어가 아직 켜져 있지 않습니다")
+                            ? L.t("사용 중인 모드: ", "Active mode: ") + model.activeProfileDisplayName
+                            : L.t("팬 제어가 아직 켜져 있지 않습니다", "Fan control is not enabled yet"))
 
-            if !model.daemonAvailable {
+            if !model.daemonAvailable || model.helperOutdated {
                 daemonMissingNotice
             } else if model.snapshot?.smcWritable == false {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("팬 속도 변경이 반영되지 않고 있습니다. 다른 팬 제어 앱(Macs Fan Control 등)이 켜져 있으면 종료해 주세요.")
+                    Text(L.t("팬 속도 변경이 반영되지 않고 있습니다. 다른 팬 제어 앱(Macs Fan Control 등)이 켜져 있으면 종료해 주세요.", "Fan speed changes are not taking effect. Quit other fan control apps (such as Macs Fan Control)."))
                         .font(.system(size: 11))
                     Spacer()
                 }
@@ -159,9 +170,9 @@ struct DashboardView: View {
                         .font(Theme.numeric(12))
                         .frame(width: 70, alignment: .trailing)
 
-                    Button("자동") { model.setFanMode(.automatic, fanIndex: fan.index) }
+                    Button(L.t("자동", "Auto")) { model.setFanMode(.automatic, fanIndex: fan.index) }
                         .disabled(!model.daemonAvailable)
-                    Button("최대") {
+                    Button(L.t("최대", "Max")) {
                         ui.manualRPM = fan.maxRPM
                         model.setFanMode(.fixed(rpm: fan.maxRPM), fanIndex: fan.index)
                     }
@@ -183,14 +194,14 @@ struct DashboardView: View {
 
     private var statisticsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "최근 \(Int(model.chartMinutes))분 통계",
-                          subtitle: "그래프와 같은 구간을 숫자로 요약합니다")
+            SectionHeader(title: L.t("최근 \(Int(model.chartMinutes))분 통계", "Last \(Int(model.chartMinutes)) min"),
+                          subtitle: L.t("그래프와 같은 구간을 숫자로 요약합니다", "Same range as the chart, as numbers"))
 
             VStack(spacing: 0) {
                 HStack {
-                    Text("센서").font(Theme.label).foregroundStyle(.secondary)
+                    Text(L.t("센서", "Sensor")).font(Theme.label).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    ForEach(["최저", "평균", "최고", "현재"], id: \.self) { header in
+                    ForEach([L.t("최저","Min"), L.t("평균","Avg"), L.t("최고","Max"), L.t("현재","Now")], id: \.self) { header in
                         Text(header).font(Theme.label).foregroundStyle(.secondary)
                             .frame(width: 62, alignment: .trailing)
                     }
@@ -206,7 +217,7 @@ struct DashboardView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: d.group.symbolName)
                                     .font(.system(size: 9)).foregroundStyle(.secondary)
-                                Text(d.name).font(.system(size: 11))
+                                Text(d.displayName).font(.system(size: 11))
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -222,7 +233,7 @@ struct DashboardView: View {
             }
 
             if model.liveHistory.count < 5 {
-                Text("표본을 모으는 중입니다. 잠시 뒤에 값이 채워집니다.")
+                Text(L.t("표본을 모으는 중입니다. 잠시 뒤에 값이 채워집니다.", "Collecting samples — values will fill in shortly."))
                     .font(Theme.caption).foregroundStyle(.tertiary)
             }
         }
@@ -247,7 +258,7 @@ struct DashboardView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: profile.symbol).font(.system(size: 10))
-                Text(profile.name).font(.system(size: 11, weight: .medium))
+                Text(profile.displayName).font(.system(size: 11, weight: .medium))
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
@@ -265,13 +276,13 @@ struct DashboardView: View {
     private var chartCard: some View {
         VStack(spacing: 10) {
             SectionHeader(
-                title: "추이",
-                subtitle: "온도와 팬 속도를 함께 봅니다",
+                title: L.t("추이", "Trend"),
+                subtitle: L.t("온도와 팬 속도를 함께 봅니다", "Temperature and fan speed together"),
                 trailing: AnyView(
                     Picker("", selection: $model.chartMinutes) {
-                        Text("1분").tag(1.0)
-                        Text("5분").tag(5.0)
-                        Text("15분").tag(15.0)
+                        Text(L.t("1분", "1m")).tag(1.0)
+                        Text(L.t("5분", "5m")).tag(5.0)
+                        Text(L.t("15분", "15m")).tag(15.0)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 170)
@@ -285,8 +296,8 @@ struct DashboardView: View {
                                 id: \.offset) { _, point in
                             LineMark(x: .value("시각", point.0),
                                      y: .value("온도", point.1),
-                                     series: .value("센서", d.name))
-                                .foregroundStyle(by: .value("센서", d.name))
+                                     series: .value("Series", d.displayName))
+                                .foregroundStyle(by: .value("Series", d.displayName))
                                 .lineStyle(StrokeStyle(lineWidth: 1.8))
                                 .interpolationMethod(.monotone)
                         }
@@ -300,7 +311,7 @@ struct DashboardView: View {
                             ? (point.1 - fan.minRPM) / (fan.maxRPM - fan.minRPM) : 0
                         AreaMark(x: .value("시각", point.0),
                                  y: .value("온도", 20 + normalized * 80),
-                                 series: .value("센서", "팬 속도"))
+                                 series: .value("Series", L.t("팬 속도", "Fan speed")))
                             .foregroundStyle(
                                 LinearGradient(colors: [Color.accentColor.opacity(0.22),
                                                         Color.accentColor.opacity(0.02)],

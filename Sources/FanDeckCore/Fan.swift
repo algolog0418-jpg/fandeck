@@ -41,8 +41,8 @@ public final class FanController: @unchecked Sendable {
 
     /// Mac mini 처럼 SMC 에 팬 이름 키가 없는 모델이 많아서, 개수로 이름을 정한다.
     private func defaultName(index: Int, total: Int) -> String {
-        if total == 1 { return "배기 팬" }
-        return "팬 \(index + 1)"
+        if total == 1 { return L.t("배기 팬", "Exhaust") }
+        return L.t("팬 \(index + 1)", "Fan \(index + 1)")
     }
 
     public func readFan(_ index: Int) -> FanInfo? {

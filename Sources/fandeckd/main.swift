@@ -51,6 +51,13 @@ func log(_ message: String) { Log.shared.write(message) }
 final class ConfigStore {
     private let lock = NSLock()
     private var config: FanDeckConfig
+    /// 설정이 바뀐 횟수. 앱이 이 번호로 변경을 알아챈다.
+    private var revision = 0
+
+    func currentRevision() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return revision
+    }
 
     init(defaultFans: [FanInfo]) {
         let fm = FileManager.default
@@ -61,6 +68,10 @@ final class ConfigStore {
            let loaded = try? FanDeckConfig.decode(data) {
             config = loaded
             log("설정 파일을 불러왔습니다 (프로파일 \(loaded.profiles.count)개)")
+            // 새 버전에서 늘어난 설정 항목은 파일에 없다. 디코딩할 때 기본값으로 채워지지만
+            // 그대로 두면 파일에는 계속 빠져 있어서, 앱에서 그 항목을 바꿔도
+            // 저장된 적이 없는 것처럼 보인다. 불러오자마자 한 번 다시 써서 구조를 맞춘다.
+            save()
         } else {
             config = FanDeckConfig.makeDefault(fans: defaultFans)
             log("설정 파일이 없어 기본 설정을 만들었습니다")
@@ -76,6 +87,7 @@ final class ConfigStore {
     func update(_ newValue: FanDeckConfig) {
         lock.lock()
         config = newValue
+        revision += 1
         lock.unlock()
         save()
     }
@@ -83,6 +95,7 @@ final class ConfigStore {
     func mutate(_ body: (inout FanDeckConfig) -> Void) {
         lock.lock()
         body(&config)
+        revision += 1
         let snapshot = config
         lock.unlock()
         write(snapshot)
@@ -328,7 +341,9 @@ final class ControlLoop {
             smcWritable: smcWritable,
             fans: fanController.readAllFans(),
             runtime: states,
-            autoSwitchReason: reason)
+            autoSwitchReason: reason,
+            configRevision: store.currentRevision(),
+            configSchema: FanDeckConfig.schemaVersion)
     }
 
     func setOverride(fanIndex: Int, mode: FanMode) {
@@ -486,8 +501,14 @@ let server = SocketServer(path: FanDeckPaths.socketPath) { request in
     case .getConfig:
         return .config(store.current())
     case .setConfig(let newConfig):
+        let previousInterval = store.current().tickInterval
         store.update(newConfig)
         loop.clearOverrides()
+        // 제어 주기가 바뀌었으면 타이머를 다시 걸어야 반영된다.
+        if abs(previousInterval - newConfig.tickInterval) > 0.01 {
+            rescheduleTimer(interval: newConfig.tickInterval)
+            log("제어 주기 변경: \(newConfig.tickInterval)초")
+        }
         log("설정이 갱신되었습니다")
         return .ok
     case .activateProfile(let id):
@@ -521,6 +542,14 @@ do { try server.start() } catch {
     exit(1)
 }
 
+func rescheduleTimer(interval: Double) {
+    timer.cancel()
+    timer = DispatchSource.makeTimerSource(queue: .main)
+    timer.schedule(deadline: .now() + interval, repeating: max(interval, 0.25))
+    timer.setEventHandler { loop.tick() }
+    timer.resume()
+}
+
 // 종료 시 팬 제어를 반드시 시스템에 돌려준다.
 // DispatchSource 는 참조가 끊기면 동작을 멈추므로 전역에 붙잡아 둔다.
 var signalSources: [DispatchSourceSignal] = []
@@ -545,9 +574,8 @@ for sig in [SIGTERM, SIGINT, SIGHUP] {
     signalSources.append(source)
 }
 
-let timer = DispatchSource.makeTimerSource(queue: .main)
-timer.schedule(deadline: .now() + 1.0,
-               repeating: store.current().tickInterval)
+var timer = DispatchSource.makeTimerSource(queue: .main)
+timer.schedule(deadline: .now() + 1.0, repeating: store.current().tickInterval)
 timer.setEventHandler { loop.tick() }
 timer.resume()
 

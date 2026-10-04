@@ -18,6 +18,27 @@ final class AppModel {
     private(set) var fans: [FanInfo] = []
     private(set) var snapshot: StatusSnapshot?
     private(set) var daemonAvailable = false
+    /// 백그라운드 서비스가 앱과 다른 버전인지.
+    ///
+    /// 서비스는 설정 파일을 자기가 아는 구조로만 읽고 쓴다. 앱만 새로 올리면
+    /// 새로 생긴 설정 항목을 서비스가 통째로 버려서, 사용자가 뭘 바꿔도
+    /// 되돌아가는 것처럼 보인다.
+    ///
+    /// 버전 문자열(1.0.0)은 빌드마다 바뀌지 않고, 바이너리 크기는 관계없는 변경에도
+    /// 달라진다. 설정 구조의 판 번호를 비교하는 게 정확하다.
+    private(set) var helperOutdated = false
+
+    /// 현재 언어.
+    ///
+    /// `L.language` 는 전역 변수라 바뀌어도 SwiftUI 가 알지 못한다.
+    /// 화면이 다시 그려지도록 관찰 가능한 속성으로도 들고 있는다.
+    private(set) var language: AppLanguage = .system
+    /// 마지막으로 반영한 설정 개정 번호.
+    @ObservationIgnored private var lastConfigRevision = -1
+
+    var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+    }
     private(set) var lastError: String?
 
     // MARK: 시스템 사용량
@@ -47,7 +68,11 @@ final class AppModel {
 
     /// 앱이 켜져 있는 동안의 짧은 히스토리. 긴 추이는 제어 서비스에서 받아온다.
     private(set) var liveHistory: [HistorySample] = []
-    private let liveHistoryLimit = 900      // 1초 주기로 15분
+    /// 표본 개수가 아니라 "몇 분치" 로 잡는다. 갱신 주기를 바꾸면 개수도 따라가야
+    /// 그래프가 항상 같은 시간 범위를 보여준다.
+    private var liveHistoryLimit: Int {
+        max(Int(20 * 60 / max(refreshInterval, 0.5)), 200)
+    }
 
     // MARK: 설정
     var config: FanDeckConfig?
@@ -67,12 +92,12 @@ final class AppModel {
 
         var title: String {
             switch self {
-            case .dashboard: return "대시보드"
-            case .sensors:   return "센서"
-            case .activity:  return "활동"
-            case .curve:     return "팬 커브"
-            case .profiles:  return "프로파일"
-            case .settings:  return "설정"
+            case .dashboard: return L.t("대시보드", "Dashboard")
+            case .sensors:   return L.t("센서", "Sensors")
+            case .activity:  return L.t("활동", "Activity")
+            case .curve:     return L.t("팬 커브", "Fan Curve")
+            case .profiles:  return L.t("프로파일", "Profiles")
+            case .settings:  return L.t("설정", "Settings")
             }
         }
 
@@ -283,14 +308,20 @@ final class AppModel {
                     let previouslyUnavailable = !self.daemonAvailable
                     self.snapshot = s
                     self.daemonAvailable = true
-                    // 메뉴 막대·CLI·자동 전환으로 다른 쪽에서 모드가 바뀌었을 수 있다.
-                    // 그때 설정을 다시 읽지 않으면 창에 옛 모드가 그대로 남는다.
-                    if previouslyUnavailable || self.config?.activeProfileID != s.activeProfileID {
+                    let outdated = s.configSchema < FanDeckConfig.schemaVersion
+                    if outdated != self.helperOutdated { self.helperOutdated = outdated }
+                    // 메뉴 막대·CLI·자동 전환 등 다른 쪽에서 설정이 바뀌었을 수 있다.
+                    // 개정 번호가 달라졌으면 무엇이 바뀌었든 다시 읽는다.
+                    if previouslyUnavailable
+                        || s.configRevision != self.lastConfigRevision
+                        || self.config?.activeProfileID != s.activeProfileID {
+                        self.lastConfigRevision = s.configRevision
                         self.refreshConfig()
                     }
                 } else {
                     self.snapshot = nil
                     self.daemonAvailable = false
+                    self.helperOutdated = false
                 }
             }
         }
@@ -361,6 +392,25 @@ final class AppModel {
 
     func formatted(_ key: String) -> String { display(key) }
 
+    /// 지금 쓰는 모드 이름.
+    ///
+    /// 서비스가 보내 주는 이름은 설정 파일에 저장된 한국어 그대로라서,
+    /// 영어로 쓸 때는 앱이 직접 번역해야 한다.
+    var activeProfileDisplayName: String {
+        if let profile = config?.activeProfile { return profile.displayName }
+        return snapshot?.activeProfileName ?? "—"
+    }
+
+    /// 팬 하나의 현재 모드 설명. 서비스 문자열 대신 설정에서 다시 만든다.
+    func modeLabel(for fanIndex: Int) -> String {
+        if snapshot?.isCritical == true { return L.t("과열 보호", "Thermal protection") }
+        guard let profile = config?.activeProfile else {
+            return snapshot?.runtime.first { $0.fanIndex == fanIndex }?.modeLabel
+                ?? L.t("자동", "Auto")
+        }
+        return profile.setting(for: fanIndex).mode.label
+    }
+
     var activeFan: FanInfo? {
         fans.first { $0.index == selectedFanIndex } ?? fans.first
     }
@@ -407,9 +457,14 @@ final class AppModel {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 if case .config(let c)? = result {
+                    self.setLanguage(c.language)
+                    // 아직 보내지 않은 변경이 있으면 덮어쓰지 않는다.
+                    // (슬라이더를 움직이는 중에 값이 되돌아가 보이는 걸 막는다)
+                    guard !self.hasPendingConfigChange else { return }
                     self.config = c
                     self.daemonAvailable = true
                 } else if self.config == nil {
+                    self.setLanguage(.system)
                     // 데몬이 없을 때도 UI 가 비어 보이지 않도록 기본 설정을 만들어 보여준다.
                     self.config = FanDeckConfig.makeDefault(fans: FanController.shared.readAllFans())
                 }
@@ -434,14 +489,32 @@ final class AppModel {
         sendAndRefresh(.activateProfile(profile.id), onFailure: "프로파일을 바꾸지 못했습니다")
     }
 
+    @ObservationIgnored private var configSendTask: Task<Void, Never>?
+    /// 아직 서비스로 보내지 않은 변경이 있는지. 작업이 끝나면 반드시 내려간다.
+    @ObservationIgnored private var hasPendingConfigChange = false
+
+    /// 설정을 바꾼다. 화면은 즉시 반영하고, 서비스로 보내는 건 살짝 미룬다.
+    ///
+    /// 커브 점을 끌면 프레임마다 설정이 바뀌는데, 그때마다 소켓으로 보내면
+    /// 서비스가 초당 수십 번 설정 파일을 다시 쓰게 된다. 마지막 상태만 보내면 충분하다.
     func apply(config newConfig: FanDeckConfig) {
+        setLanguage(newConfig.language)
         let appearanceChanged = config?.menuBarIconStyle != newConfig.menuBarIconStyle
             || config?.menuBarTwoLines != newConfig.menuBarTwoLines
         config = newConfig
         if appearanceChanged { onMenuBarAppearanceChange?() }
         // 단위나 표시 설정이 바뀌면 메뉴 막대 글자도 즉시 다시 만든다.
         updateMenuBarTitle()
-        sendAndRefresh(.setConfig(newConfig), onFailure: "설정을 저장하지 못했습니다")
+        recomputeDerived()
+
+        configSendTask?.cancel()
+        hasPendingConfigChange = true
+        configSendTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.hasPendingConfigChange = false
+            self.sendAndRefresh(.setConfig(newConfig), onFailure: "설정을 저장하지 못했습니다")
+        }
     }
 
     func setFanMode(_ mode: FanMode, fanIndex: Int) {
@@ -539,6 +612,26 @@ final class AppModel {
         if NSApp.activationPolicy() != policy {
             NSApp.setActivationPolicy(policy)
         }
+    }
+
+    private func setLanguage(_ newValue: AppLanguage) {
+        let changed = L.language != newValue
+        L.language = newValue
+        if language != newValue { language = newValue }
+        // 센서 이름은 목록을 만들 때 정해지므로, 언어가 바뀌면 다시 만들어야 한다.
+        if changed { loadDescriptors() }
+    }
+
+    /// 아직 보내지 않은 설정 변경을 지금 바로 보낸다.
+    ///
+    /// 설정 전송은 0.3초 미뤄 두는데, 그 사이에 앱이 꺼지면 변경이 사라진다.
+    /// 종료 직전에 한 번 비워 준다.
+    func flushPendingConfig() {
+        guard hasPendingConfigChange, let config else { return }
+        configSendTask?.cancel()
+        hasPendingConfigChange = false
+        // 종료 중이라 비동기로 보내면 늦는다. 동기로 보낸다.
+        _ = try? IPCClient.send(.setConfig(config), timeout: 2)
     }
 
     /// 메뉴 막대에서 창을 열 때 쓴다. Dock 아이콘을 먼저 되살려야

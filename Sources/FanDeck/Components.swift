@@ -279,7 +279,7 @@ struct SensorCell: View {
                 .frame(width: 3, height: 26)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(descriptor.name)
+                Text(descriptor.displayName)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                 Text(descriptor.key)
@@ -303,7 +303,7 @@ struct SensorCell: View {
                     .foregroundStyle(isFavorite ? Color.yellow : Color.secondary.opacity(0.45))
             }
             .buttonStyle(.plain)
-            .help(isFavorite ? "즐겨찾기에서 제거" : "즐겨찾기에 추가")
+            .help(isFavorite ? L.t("즐겨찾기에서 제거", "Remove from favorites") : L.t("즐겨찾기에 추가", "Add to favorites"))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

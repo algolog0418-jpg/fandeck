@@ -12,8 +12,8 @@ private final class ActivityState: ObservableObject {
         var title: String {
             switch self {
             case .cpu:    return "CPU"
-            case .memory: return "메모리"
-            case .name:   return "이름"
+            case .memory: return L.t("메모리", "Memory")
+            case .name:   return L.t("이름", "Name")
             }
         }
     }
@@ -60,11 +60,11 @@ struct ActivityView: View {
         }
         .onAppear { model.needsProcessList = true }
         .onDisappear { model.needsProcessList = false }
-        .alert("프로세스를 종료할까요?",
+        .alert(L.t("프로세스를 종료할까요?", "Quit this process?"),
                isPresented: Binding(get: { ui.confirmingKill != nil },
                                     set: { if !$0 { ui.confirmingKill = nil } })) {
-            Button("취소", role: .cancel) { ui.confirmingKill = nil }
-            Button("종료", role: .destructive) {
+            Button(L.t("취소", "Cancel"), role: .cancel) { ui.confirmingKill = nil }
+            Button(L.t("종료", "Quit"), role: .destructive) {
                 if let target = ui.confirmingKill { model.terminate(target) }
                 ui.confirmingKill = nil
             }
@@ -91,7 +91,7 @@ struct ActivityView: View {
             HStack(spacing: 5) {
                 Image(systemName: "cpu").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.accentColor)
-                Text("CPU 사용률").font(Theme.label).foregroundStyle(.secondary)
+                Text(L.t("CPU 사용률", "CPU usage")).font(Theme.label).foregroundStyle(.secondary)
                 Spacer()
             }
 
@@ -118,8 +118,8 @@ struct ActivityView: View {
             .frame(height: 7)
 
             HStack(spacing: 12) {
-                legend(color: .accentColor, label: "사용자", value: model.cpuUsage.user)
-                legend(color: .orange, label: "시스템", value: model.cpuUsage.system)
+                legend(color: .accentColor, label: L.t("사용자", "User"), value: model.cpuUsage.user)
+                legend(color: .orange, label: L.t("시스템", "System"), value: model.cpuUsage.system)
                 Spacer()
             }
         }
@@ -143,9 +143,9 @@ struct ActivityView: View {
             HStack(spacing: 5) {
                 Image(systemName: "memorychip").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(pressureColor)
-                Text("메모리").font(Theme.label).foregroundStyle(.secondary)
+                Text(L.t("메모리", "Memory")).font(Theme.label).foregroundStyle(.secondary)
                 Spacer()
-                Text(MemoryUsage.format(memory.total) + " 중")
+                Text(L.t("총 ", "of ") + MemoryUsage.format(memory.total))
                     .font(Theme.caption).foregroundStyle(.tertiary)
             }
 
@@ -168,9 +168,9 @@ struct ActivityView: View {
             .frame(height: 7)
 
             HStack(spacing: 12) {
-                Text("고정 \(MemoryUsage.format(memory.wired))")
+                Text(L.t("고정 ", "Wired ") + MemoryUsage.format(memory.wired))
                     .font(Theme.caption).foregroundStyle(.secondary)
-                Text("압축 \(MemoryUsage.format(memory.compressed))")
+                Text(L.t("압축 ", "Compressed ") + MemoryUsage.format(memory.compressed))
                     .font(Theme.caption).foregroundStyle(.secondary)
                 Spacer()
             }
@@ -185,7 +185,7 @@ struct ActivityView: View {
             HStack(spacing: 5) {
                 Image(systemName: "thermometer.medium").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Text("발열 / 냉각").font(Theme.label).foregroundStyle(.secondary)
+                Text(L.t("발열 / 냉각", "Thermals")).font(Theme.label).foregroundStyle(.secondary)
                 Spacer()
             }
 
@@ -227,7 +227,7 @@ struct ActivityView: View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
-                TextField("프로세스 이름이나 PID", text: $ui.search)
+                TextField(L.t("프로세스 이름이나 PID", "Process name or PID"), text: $ui.search)
                     .textFieldStyle(.plain).font(.system(size: 12))
             }
             .padding(.horizontal, 9).padding(.vertical, 6)
@@ -272,11 +272,11 @@ struct ActivityView: View {
 
     private var header: some View {
         HStack(spacing: 0) {
-            Text("프로세스").font(Theme.label).foregroundStyle(.secondary)
+            Text(L.t("프로세스", "Process")).font(Theme.label).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("CPU").font(Theme.label).foregroundStyle(.secondary)
                 .frame(width: 92, alignment: .trailing)
-            Text("메모리").font(Theme.label).foregroundStyle(.secondary)
+            Text(L.t("메모리", "Memory")).font(Theme.label).foregroundStyle(.secondary)
                 .frame(width: 76, alignment: .trailing)
             Text("PID").font(Theme.label).foregroundStyle(.secondary)
                 .frame(width: 58, alignment: .trailing)

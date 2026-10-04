@@ -37,8 +37,8 @@ struct ProfilesView: View {
                     model.apply(config: c)
                 })) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("자동 프로파일 전환").font(.system(size: 13, weight: .semibold))
-                    Text("조건을 만족하는 프로파일로 데몬이 알아서 바꿉니다. 조건이 없으면 그대로 둡니다.")
+                    Text(L.t("자동 프로파일 전환", "Automatic profile switching")).font(.system(size: 13, weight: .semibold))
+                    Text(L.t("조건을 만족하는 프로파일로 알아서 바꿉니다. 조건이 없으면 그대로 둡니다.", "Switches to a profile whose condition matches. Does nothing if none are set."))
                         .font(Theme.caption).foregroundStyle(.secondary)
                 }
             }
@@ -63,18 +63,18 @@ struct ProfilesView: View {
                                                        : Color.primary.opacity(0.06)))
 
                 if ui.editingProfileID == profile.id {
-                    TextField("이름", text: Binding(
+                    TextField(L.t("이름", "Name"), text: Binding(
                         get: { profile.name },
                         set: { rename(profile, to: $0) }))
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 180)
                         .onSubmit { ui.editingProfileID = nil }
                 } else {
-                    Text(profile.name).font(.system(size: 13, weight: .semibold))
+                    Text(profile.displayName).font(.system(size: 13, weight: .semibold))
                 }
 
                 if profile.isBuiltIn {
-                    Text("내장").font(Theme.caption).foregroundStyle(.tertiary)
+                    Text(L.t("내장", "Built-in")).font(Theme.caption).foregroundStyle(.tertiary)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Capsule().fill(Color.primary.opacity(0.07)))
                 }
@@ -82,19 +82,19 @@ struct ProfilesView: View {
                 Spacer()
 
                 if isActive {
-                    StatusBadge(text: "사용 중", color: .green)
+                    StatusBadge(text: L.t("사용 중", "Active"), color: .green)
                 } else {
-                    Button("적용") { model.activate(profile: profile) }
+                    Button(L.t("적용", "Apply")) { model.activate(profile: profile) }
                         .controlSize(.small)
                         .disabled(!model.daemonAvailable)
                 }
 
                 Menu {
-                    Button("이름 바꾸기") { ui.editingProfileID = profile.id }
+                    Button(L.t("이름 바꾸기", "Rename")) { ui.editingProfileID = profile.id }
                         .disabled(profile.isBuiltIn)
-                    Button("복제") { duplicate(profile) }
+                    Button(L.t("복제", "Duplicate")) { duplicate(profile) }
                     Divider()
-                    Button("삭제", role: .destructive) { delete(profile) }
+                    Button(L.t("삭제", "Delete"), role: .destructive) { delete(profile) }
                         .disabled(profile.isBuiltIn)
                 } label: {
                     Image(systemName: "ellipsis.circle").font(.system(size: 12))
@@ -122,11 +122,11 @@ struct ProfilesView: View {
     private func triggerEditor(_ profile: Profile) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 8) {
-                Text("자동 전환 조건").font(Theme.label).foregroundStyle(.secondary)
+                Text(L.t("자동 전환 조건", "Auto-switch condition")).font(Theme.label).foregroundStyle(.secondary)
                 Picker("", selection: triggerKind(profile)) {
-                    Text("없음").tag(0)
-                    Text("앱 실행 시").tag(1)
-                    Text("온도 초과 시").tag(2)
+                    Text(L.t("없음", "None")).tag(0)
+                    Text(L.t("앱 실행 시", "App running")).tag(1)
+                    Text(L.t("온도 초과 시", "Above temperature")).tag(2)
                 }
                 .labelsHidden()
                 .frame(width: 130)
@@ -153,7 +153,7 @@ struct ProfilesView: View {
                         .padding(.horizontal, 6).padding(.vertical, 3)
                         .background(Capsule().fill(Color.accentColor.opacity(0.14)))
                     }
-                    TextField("프로세스 이름 (예: Final Cut Pro)", text: $ui.newAppName)
+                    TextField(L.t("프로세스 이름 (예: Final Cut Pro)", "Process name (e.g. Final Cut Pro)"), text: $ui.newAppName)
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.small)
                         .frame(width: 190)
@@ -172,7 +172,7 @@ struct ProfilesView: View {
                         get: { key },
                         set: { setTrigger(profile, .sensorAbove(key: $0, value: value)) })) {
                         ForEach(model.descriptors.filter { $0.isSynthetic && $0.unit == .celsius }, id: \.key) { d in
-                            Text(d.name).tag(d.key)
+                            Text(d.displayName).tag(d.key)
                         }
                     }
                     .labelsHidden().frame(width: 170).controlSize(.small)
@@ -212,14 +212,14 @@ struct ProfilesView: View {
         Button {
             guard var config = model.config else { return }
             let fans = model.fans.map(\.index)
-            let new = Profile(name: "새 프로파일", symbol: "slider.horizontal.3",
+            let new = Profile(name: L.t("새 프로파일", "New profile"), symbol: "slider.horizontal.3",
                               fanSettings: (fans.isEmpty ? [0] : fans).map {
                                   FanSetting(fanIndex: $0, mode: .automatic)
                               })
             config.profiles.append(new)
             model.apply(config: config)
         } label: {
-            Label("프로파일 추가", systemImage: "plus.circle.fill")
+            Label(L.t("프로파일 추가", "Add profile"), systemImage: "plus.circle.fill")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 9)
         }
@@ -254,7 +254,7 @@ struct ProfilesView: View {
         guard var config = model.config else { return }
         var copy = profile
         copy.id = UUID()
-        copy.name = profile.name + " 사본"
+        copy.name = profile.displayName + L.t(" 사본", " copy")
         copy.isBuiltIn = false
         config.profiles.append(copy)
         model.apply(config: config)

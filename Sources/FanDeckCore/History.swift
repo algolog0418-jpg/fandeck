@@ -133,11 +133,11 @@ public enum NoiseEstimator {
 
     public static func label(forDB db: Double) -> String {
         switch db {
-        case ..<22:  return "거의 무음"
-        case ..<28:  return "조용함"
-        case ..<34:  return "들림"
-        case ..<40:  return "뚜렷함"
-        default:     return "시끄러움"
+        case ..<22:  return L.t("거의 무음", "Near silent")
+        case ..<28:  return L.t("조용함", "Quiet")
+        case ..<34:  return L.t("들림", "Audible")
+        case ..<40:  return L.t("뚜렷함", "Noticeable")
+        default:     return L.t("시끄러움", "Loud")
         }
     }
 }

@@ -28,9 +28,12 @@ public enum ProfileTrigger: Codable, Hashable, Sendable {
 
     public var label: String {
         switch self {
-        case .manual: return "수동"
-        case .appRunning(let names): return "앱 실행 시 (\(names.joined(separator: ", ")))"
-        case .sensorAbove(_, let v): return "온도 \(Int(v))°C 초과 시"
+        case .manual: return L.t("수동", "Manual")
+        case .appRunning(let names):
+            return L.t("앱 실행 시 (\(names.joined(separator: ", ")))",
+                       "When running (\(names.joined(separator: ", ")))")
+        case .sensorAbove(_, let v):
+            return L.t("온도 \(Int(v))°C 초과 시", "Above \(Int(v))°C")
         }
     }
 }
@@ -62,6 +65,20 @@ public struct Profile: Codable, Identifiable, Hashable, Sendable {
         self.priority = priority
     }
 
+    /// 화면에 띄울 이름. 내장 프로파일은 설정 파일에 한국어로 저장돼 있어서
+    /// 영어로 쓸 때는 여기서 바꿔 준다. 사용자가 만든 프로파일 이름은 건드리지 않는다.
+    public var displayName: String {
+        guard isBuiltIn else { return name }
+        switch name {
+        case "시스템 자동": return L.t("시스템 자동", "System automatic")
+        case "조용함":     return L.t("조용함", "Quiet")
+        case "균형":       return L.t("균형", "Balanced")
+        case "성능":       return L.t("성능", "Performance")
+        case "최고 속도":   return L.t("최고 속도", "Maximum")
+        default:           return name
+        }
+    }
+
     public func setting(for fanIndex: Int) -> FanSetting {
         fanSettings.first { $0.fanIndex == fanIndex }
             ?? FanSetting(fanIndex: fanIndex, mode: .automatic)
@@ -74,14 +91,22 @@ public enum MenuBarIconStyle: String, Codable, Sendable, CaseIterable {
 
     public var localizedName: String {
         switch self {
-        case .monochrome: return "보이기 (검은색 & 흰색)"
-        case .colored:    return "보이기 (색상)"
-        case .hidden:     return "숨기기"
+        case .monochrome: return L.t("보이기 (검은색 & 흰색)", "Show (black & white)")
+        case .colored:    return L.t("보이기 (색상)", "Show (colored)")
+        case .hidden:     return L.t("숨기기", "Hide")
         }
     }
 }
 
 public struct FanDeckConfig: Codable, Hashable, Sendable {
+    /// 설정 구조의 판 번호.
+    ///
+    /// 항목을 새로 추가할 때마다 올린다. 서비스는 자기가 아는 구조로만 설정을
+    /// 읽고 쓰기 때문에, 앱만 새로 깔면 새 항목이 조용히 사라진다.
+    /// 앱은 이 번호를 서비스가 보내 준 값과 비교해서 그 상황을 알아챈다.
+    /// (바이너리 크기 비교는 관계없는 변경에도 반응해서 쓸 수 없었다.)
+    public static let schemaVersion = 4
+
     public var version: Int
     public var activeProfileID: UUID
     public var profiles: [Profile]
@@ -128,6 +153,9 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
     /// 외장(USB·Thunderbolt) 드라이브 온도까지 읽을지. 읽는 데 시간이 조금 걸린다.
     public var includeExternalDrives: Bool
 
+    /// 화면에 쓸 언어.
+    public var language: AppLanguage
+
     /// 표시 규칙을 한 덩어리로 넘길 때 쓴다.
     public var valueFormat: ValueFormat {
         ValueFormat(temperatureUnit: temperatureUnit, showDecimals: showDecimals)
@@ -160,7 +188,8 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
                 menuBarIconStyle: MenuBarIconStyle = .monochrome,
                 menuBarFanIndex: Int? = nil,
                 menuBarTwoLines: Bool = false,
-                includeExternalDrives: Bool = false) {
+                includeExternalDrives: Bool = false,
+                language: AppLanguage = .system) {
         self.version = version
         self.activeProfileID = activeProfileID
         self.profiles = profiles
@@ -183,6 +212,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
         self.menuBarFanIndex = menuBarFanIndex
         self.menuBarTwoLines = menuBarTwoLines
         self.includeExternalDrives = includeExternalDrives
+        self.language = language
     }
 
     /// 구버전 설정 파일에 없던 항목은 기본값으로 채운다.
@@ -204,15 +234,18 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
         favoriteSensorKeys = try c.decodeIfPresent([String].self, forKey: .favoriteSensorKeys)
             ?? [SensorCatalog.cpuMaxKey, SensorCatalog.gpuMaxKey, "PSTR"]
         historyRetentionSeconds = try c.decodeIfPresent(Double.self, forKey: .historyRetentionSeconds) ?? 6 * 3600
-        temperatureUnit = try c.decodeIfPresent(TemperatureUnit.self, forKey: .temperatureUnit) ?? .celsius
+        temperatureUnit = (try? c.decodeIfPresent(TemperatureUnit.self, forKey: .temperatureUnit)) ?? .celsius
         showDecimals = try c.decodeIfPresent(Bool.self, forKey: .showDecimals) ?? true
         showDockIcon = try c.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
         startMinimized = try c.decodeIfPresent(Bool.self, forKey: .startMinimized) ?? false
         checkUpdatesOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .checkUpdatesOnLaunch) ?? true
-        menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .monochrome
+        menuBarIconStyle = (try? c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle)) ?? .monochrome
         menuBarFanIndex = try c.decodeIfPresent(Int.self, forKey: .menuBarFanIndex)
         menuBarTwoLines = try c.decodeIfPresent(Bool.self, forKey: .menuBarTwoLines) ?? false
         includeExternalDrives = try c.decodeIfPresent(Bool.self, forKey: .includeExternalDrives) ?? false
+        // 나중에 언어가 늘어나면 예전 버전은 그 값을 모른다. 그대로 두면 디코딩이
+        // 통째로 실패해서 설정 파일 전체가 날아간다. 모르는 값은 기본값으로 넘긴다.
+        language = (try? c.decodeIfPresent(AppLanguage.self, forKey: .language)) ?? .system
     }
 
     public var activeProfile: Profile? {

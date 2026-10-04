@@ -36,10 +36,20 @@ public struct StatusSnapshot: Codable, Hashable, Sendable {
     public let runtime: [FanRuntimeState]
     /// 데몬이 자동 전환으로 프로파일을 바꿨다면 그 이유.
     public let autoSwitchReason: String?
+    /// 설정이 바뀔 때마다 1씩 오른다.
+    ///
+    /// 앱은 이 번호만 보고 설정을 다시 읽을지 정한다. 예전에는 활성 프로파일이
+    /// 달라졌을 때만 다시 읽었는데, 그러면 메뉴 막대나 다른 창에서 온도 단위처럼
+    /// 프로파일과 무관한 설정을 바꿨을 때 화면이 옛 값을 계속 보여줬다.
+    public let configRevision: Int
+    /// 서비스가 아는 설정 구조의 판 번호.
+    public let configSchema: Int
 
     public init(daemonVersion: String, uptimeSeconds: Double, activeProfileID: UUID,
                 activeProfileName: String, isCritical: Bool, smcWritable: Bool,
-                fans: [FanInfo], runtime: [FanRuntimeState], autoSwitchReason: String?) {
+                fans: [FanInfo], runtime: [FanRuntimeState], autoSwitchReason: String?,
+                configRevision: Int = 0,
+                configSchema: Int = FanDeckConfig.schemaVersion) {
         self.daemonVersion = daemonVersion
         self.uptimeSeconds = uptimeSeconds
         self.activeProfileID = activeProfileID
@@ -49,6 +59,25 @@ public struct StatusSnapshot: Codable, Hashable, Sendable {
         self.fans = fans
         self.runtime = runtime
         self.autoSwitchReason = autoSwitchReason
+        self.configRevision = configRevision
+        self.configSchema = configSchema
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        daemonVersion = try c.decode(String.self, forKey: .daemonVersion)
+        uptimeSeconds = try c.decode(Double.self, forKey: .uptimeSeconds)
+        activeProfileID = try c.decode(UUID.self, forKey: .activeProfileID)
+        activeProfileName = try c.decode(String.self, forKey: .activeProfileName)
+        isCritical = try c.decode(Bool.self, forKey: .isCritical)
+        smcWritable = try c.decode(Bool.self, forKey: .smcWritable)
+        fans = try c.decode([FanInfo].self, forKey: .fans)
+        runtime = try c.decode([FanRuntimeState].self, forKey: .runtime)
+        autoSwitchReason = try c.decodeIfPresent(String.self, forKey: .autoSwitchReason)
+        // 옛 서비스는 이 값을 보내지 않는다.
+        configRevision = try c.decodeIfPresent(Int.self, forKey: .configRevision) ?? 0
+        // 이 값을 보내지 않는 옛 서비스는 구버전으로 본다.
+        configSchema = try c.decodeIfPresent(Int.self, forKey: .configSchema) ?? 0
     }
 }
 

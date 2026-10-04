@@ -14,10 +14,10 @@ private final class SettingsState: ObservableObject {
 
         var title: String {
             switch self {
-            case .general: return "일반"
-            case .sensors: return "센서"
-            case .menuBar: return "메뉴 막대"
-            case .control: return "팬 제어"
+            case .general: return L.t("일반", "General")
+            case .sensors: return L.t("센서", "Sensors")
+            case .menuBar: return L.t("메뉴 막대", "Menu Bar")
+            case .control: return L.t("팬 제어", "Fan Control")
             }
         }
 
@@ -93,7 +93,24 @@ struct SettingsView: View {
     private var generalSection: some View {
         VStack(spacing: Theme.gridSpacing) {
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "시작")
+                SectionHeader(title: L.t("언어", "Language"))
+                HStack(spacing: 12) {
+                    Picker("", selection: configBinding(\.language)) {
+                        ForEach(AppLanguage.allCases, id: \.self) { lang in
+                            Text(lang.displayName).tag(lang)
+                        }
+                    }
+                    .labelsHidden().frame(width: 260)
+                    Spacer()
+                }
+                Text(L.t("바꾸면 즉시 적용됩니다. 앱을 다시 켤 필요가 없습니다.",
+                         "Applies immediately — no restart needed."))
+                    .font(Theme.caption).foregroundStyle(.secondary)
+            }
+            .card()
+
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(title: L.t("시작", "Startup"))
 
                 Toggle(isOn: Binding(
                     get: { SMAppService.mainApp.status == .enabled },
@@ -105,14 +122,14 @@ struct SettingsView: View {
                             ui.exportMessage = "로그인 항목을 바꾸지 못했습니다: \(error.localizedDescription)"
                         }
                     })) {
-                    Text("로그인할 때 자동으로 실행").font(.system(size: 12))
+                    Text(L.t("로그인할 때 자동으로 실행", "Launch at login")).font(.system(size: 12))
                 }
                 .toggleStyle(.switch)
 
                 Toggle(isOn: configBinding(\.startMinimized)) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("창을 띄우지 않고 메뉴 막대로만 시작").font(.system(size: 12))
-                        Text("자동 실행될 때 화면을 가리지 않습니다.")
+                        Text(L.t("창을 띄우지 않고 메뉴 막대로만 시작", "Start in the menu bar without a window")).font(.system(size: 12))
+                        Text(L.t("자동 실행될 때 화면을 가리지 않습니다.", "Keeps your screen clear when launched automatically."))
                             .font(Theme.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -120,19 +137,19 @@ struct SettingsView: View {
                 .disabled(SMAppService.mainApp.status != .enabled)
 
                 Toggle(isOn: configBinding(\.checkUpdatesOnLaunch)) {
-                    Text("시작할 때 새 버전 확인").font(.system(size: 12))
+                    Text(L.t("시작할 때 새 버전 확인", "Check for updates on launch")).font(.system(size: 12))
                 }
                 .toggleStyle(.switch)
             }
             .card()
 
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "표시")
+                SectionHeader(title: L.t("표시", "Appearance"))
 
                 Toggle(isOn: configBinding(\.showDockIcon)) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Dock 에 아이콘 표시").font(.system(size: 12))
-                        Text("끄면 창을 닫았을 때 Dock 에서 사라지고 메뉴 막대에만 남습니다.")
+                        Text(L.t("Dock 에 아이콘 표시", "Show icon in Dock")).font(.system(size: 12))
+                        Text(L.t("끄면 창을 닫았을 때 Dock 에서 사라지고 메뉴 막대에만 남습니다.", "When off, closing the window hides the Dock icon and the app stays in the menu bar."))
                             .font(Theme.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -142,18 +159,18 @@ struct SettingsView: View {
 
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("화면 갱신 주기").font(.system(size: 12))
-                        Text("짧을수록 수치가 자주 바뀌지만 그만큼 CPU 를 씁니다. 창을 닫아 두면 자동으로 느려집니다.")
+                        Text(L.t("화면 갱신 주기", "Refresh interval")).font(.system(size: 12))
+                        Text(L.t("짧을수록 수치가 자주 바뀌지만 그만큼 CPU 를 씁니다. 창을 닫아 두면 자동으로 느려집니다.", "Shorter means more frequent updates and more CPU. Slows down automatically when the window is closed."))
                             .font(Theme.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Picker("", selection: Binding(
                         get: { model.refreshInterval },
                         set: { model.refreshInterval = $0 })) {
-                        Text("1초").tag(1.0)
-                        Text("1.5초").tag(1.5)
-                        Text("2초").tag(2.0)
-                        Text("3초").tag(3.0)
+                        Text(L.t("1초", "1s")).tag(1.0)
+                        Text(L.t("1.5초", "1.5s")).tag(1.5)
+                        Text(L.t("2초", "2s")).tag(2.0)
+                        Text(L.t("3초", "3s")).tag(3.0)
                     }
                     .labelsHidden().frame(width: 190).pickerStyle(.segmented)
                 }
@@ -171,11 +188,11 @@ struct SettingsView: View {
                 Text("FanDeck \(updater.currentVersion)").font(.system(size: 13, weight: .semibold))
                 switch updater.state {
                 case .checking:
-                    Text("확인 중…").font(Theme.caption).foregroundStyle(.secondary)
+                    Text(L.t("확인 중…", "Checking…")).font(Theme.caption).foregroundStyle(.secondary)
                 case .upToDate:
-                    Text("최신 버전입니다").font(Theme.caption).foregroundStyle(.secondary)
+                    Text(L.t("최신 버전입니다", "You are up to date")).font(Theme.caption).foregroundStyle(.secondary)
                 case .available(let version, _):
-                    Text("새 버전 \(version) 이 있습니다").font(Theme.caption).foregroundStyle(.orange)
+                    Text(L.t("새 버전 \(version) 이 있습니다", "Version \(version) is available")).font(Theme.caption).foregroundStyle(.orange)
                 case .failed(let message):
                     Text(message).font(Theme.caption).foregroundStyle(.secondary).lineLimit(1)
                 case .idle:
@@ -185,12 +202,12 @@ struct SettingsView: View {
             }
             Spacer()
             if case .available(_, let url) = updater.state {
-                Button("받으러 가기") {
+                Button(L.t("받으러 가기", "Download")) {
                     if let link = URL(string: url) { NSWorkspace.shared.open(link) }
                 }
                 .buttonStyle(.borderedProminent)
             } else {
-                Button("지금 확인") { updater.check() }
+                Button(L.t("지금 확인", "Check now")) { updater.check() }
                     .disabled(updater.state == .checking)
             }
         }
@@ -202,10 +219,10 @@ struct SettingsView: View {
     private var sensorSection: some View {
         VStack(spacing: Theme.gridSpacing) {
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "온도 표시")
+                SectionHeader(title: L.t("온도 표시", "Temperature display"))
 
                 HStack(spacing: 12) {
-                    Text("단위").font(.system(size: 12)).frame(width: 60, alignment: .leading)
+                    Text(L.t("단위", "Unit")).font(.system(size: 12)).frame(width: 60, alignment: .leading)
                     Picker("", selection: configBinding(\.temperatureUnit)) {
                         ForEach(TemperatureUnit.allCases, id: \.self) { unit in
                             Text(unit.localizedName).tag(unit)
@@ -217,7 +234,7 @@ struct SettingsView: View {
 
                 Toggle(isOn: configBinding(\.showDecimals)) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("온도를 정확하게 표시").font(.system(size: 12))
+                        Text(L.t("온도를 정확하게 표시", "Show precise temperatures")).font(.system(size: 12))
                         Text(exampleTemperature).font(Theme.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -226,14 +243,14 @@ struct SettingsView: View {
             .card()
 
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "저장장치 온도")
+                SectionHeader(title: L.t("저장장치 온도", "Storage temperatures"))
 
-                Text("내장 SSD 온도는 기본으로 읽습니다(센서 목록의 '저장장치' 그룹).")
+                Text(L.t("내장 SSD 온도는 기본으로 읽습니다(센서 목록의 '저장장치' 그룹).", "Built-in SSD temperatures are read by default (see the Storage group)."))
                     .font(Theme.caption).foregroundStyle(.secondary)
 
                 Toggle(isOn: configBinding(\.includeExternalDrives)) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("외장 드라이브 온도 포함 (USB·Thunderbolt)").font(.system(size: 12))
+                        Text(L.t("외장 드라이브 온도 포함 (USB·Thunderbolt)", "Include external drives (USB / Thunderbolt)")).font(.system(size: 12))
                         if !DriveTemperature.isAvailable {
                             Text("외장 드라이브는 드라이브 자체의 S.M.A.R.T. 정보를 읽어야 해서 smartmontools 가 필요합니다. 터미널에서 brew install smartmontools 로 설치하면 켤 수 있습니다.")
                                 .font(Theme.caption).foregroundStyle(.orange)
@@ -264,9 +281,9 @@ struct SettingsView: View {
     private var menuBarSection: some View {
         VStack(spacing: Theme.gridSpacing) {
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "메뉴 막대", subtitle: "현재 표시: \(model.menuBarTitle.replacingOccurrences(of: "\n", with: " / "))")
+                SectionHeader(title: L.t("메뉴 막대", "Menu bar"), subtitle: "현재 표시: \(model.menuBarTitle.replacingOccurrences(of: "\n", with: " / "))")
 
-                row("아이콘") {
+                row(L.t("아이콘", "Icon")) {
                     Picker("", selection: configBinding(\.menuBarIconStyle)) {
                         ForEach(MenuBarIconStyle.allCases, id: \.self) { style in
                             Text(style.localizedName).tag(style)
@@ -275,17 +292,21 @@ struct SettingsView: View {
                     .labelsHidden().frame(width: 220)
                 }
 
-                row("팬") {
+                row(L.t("팬", "Fan")) {
                     Picker("", selection: Binding(
-                        get: { model.config?.menuBarFanIndex ?? -1 },
+                        get: {
+                            // 꺼 둔 상태를 -1(첫 번째 팬)로 읽으면 선택이 되돌아가 보인다.
+                            guard model.config?.menuBarShowsFan ?? true else { return -2 }
+                            return model.config?.menuBarFanIndex ?? -1
+                        },
                         set: { newValue in
                             guard var c = model.config else { return }
                             c.menuBarFanIndex = newValue < 0 ? nil : newValue
                             c.menuBarShowsFan = newValue != -2
                             model.apply(config: c)
                         })) {
-                        Text("표시 안 함").tag(-2)
-                        Text("첫 번째 팬").tag(-1)
+                        Text(L.t("표시 안 함", "Don't show")).tag(-2)
+                        Text(L.t("첫 번째 팬", "First fan")).tag(-1)
                         ForEach(model.fans) { fan in
                             Text(fan.name).tag(fan.index)
                         }
@@ -293,7 +314,7 @@ struct SettingsView: View {
                     .labelsHidden().frame(width: 220)
                 }
 
-                row("센서") {
+                row(L.t("센서", "Sensor")) {
                     Picker("", selection: Binding(
                         get: { model.config?.menuBarShowsTemperature == false
                                ? "" : (model.config?.menuBarSensorKey ?? SensorCatalog.cpuMaxKey) },
@@ -306,9 +327,9 @@ struct SettingsView: View {
                             }
                             model.apply(config: c)
                         })) {
-                        Text("표시 안 함").tag("")
+                        Text(L.t("표시 안 함", "Don't show")).tag("")
                         ForEach(model.descriptors.filter { $0.unit == .celsius && $0.isSynthetic }, id: \.key) { d in
-                            Text(d.name).tag(d.key)
+                            Text(d.displayName).tag(d.key)
                         }
                     }
                     .labelsHidden().frame(width: 220)
@@ -318,8 +339,8 @@ struct SettingsView: View {
 
                 Toggle(isOn: configBinding(\.menuBarTwoLines)) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("팬과 센서를 두 줄로 표시").font(.system(size: 12))
-                        Text("메뉴 막대 가로 공간을 아낍니다.")
+                        Text(L.t("팬과 센서를 두 줄로 표시", "Show fan and sensor on two lines")).font(.system(size: 12))
+                        Text(L.t("메뉴 막대 가로 공간을 아낍니다.", "Saves horizontal space in the menu bar."))
                             .font(Theme.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -351,17 +372,17 @@ struct SettingsView: View {
 
     private var safetyCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "과열 보호",
+            SectionHeader(title: L.t("과열 보호", "Thermal protection"),
                           subtitle: "어떤 설정이든 이 규칙이 가장 먼저 적용됩니다")
 
             Toggle(isOn: safetyBinding(\.enabled)) {
-                Text("임계 온도를 넘으면 팬을 최대로 돌리기").font(.system(size: 12))
+                Text(L.t("임계 온도를 넘으면 팬을 최대로 돌리기", "Run fans at maximum above the critical temperature")).font(.system(size: 12))
             }
             .toggleStyle(.switch)
 
             if model.config?.safety.enabled ?? true {
                 HStack(spacing: 12) {
-                    Text("기준 센서").font(Theme.label).foregroundStyle(.secondary)
+                    Text(L.t("기준 센서", "Source sensor")).font(Theme.label).foregroundStyle(.secondary)
                     Picker("", selection: Binding(
                         get: { model.config?.safety.sensorKey ?? SensorCatalog.systemMaxKey },
                         set: { newKey in
@@ -370,7 +391,7 @@ struct SettingsView: View {
                             model.apply(config: c)
                         })) {
                         ForEach(model.descriptors.filter { $0.isSynthetic && $0.unit == .celsius }, id: \.key) { d in
-                            Text(d.name).tag(d.key)
+                            Text(d.displayName).tag(d.key)
                         }
                     }
                     .labelsHidden()
@@ -427,7 +448,7 @@ struct SettingsView: View {
 
     private var notificationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "알림",
+            SectionHeader(title: L.t("알림", "Notifications"),
                           subtitle: "메뉴 막대에 표시 중인 센서를 기준으로 알립니다")
 
             Toggle(isOn: Binding(
@@ -437,7 +458,7 @@ struct SettingsView: View {
                     c.notifyAboveTemperature = enabled ? 85 : nil
                     model.apply(config: c)
                 })) {
-                Text("온도가 기준을 넘으면 알림 보내기").font(.system(size: 12))
+                Text(L.t("온도가 기준을 넘으면 알림 보내기", "Notify when temperature exceeds a threshold")).font(.system(size: 12))
             }
             .toggleStyle(.switch)
 
@@ -478,14 +499,14 @@ struct SettingsView: View {
 
     private var dataCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "기록",
+            SectionHeader(title: L.t("기록", "History"),
                           subtitle: "백그라운드에서 쌓아 둔 온도·팬 속도 기록입니다")
 
             HStack(spacing: 10) {
                 Button {
                     exportCSV()
                 } label: {
-                    Label("CSV 로 내보내기", systemImage: "square.and.arrow.up")
+                    Label(L.t("CSV 로 내보내기", "Export as CSV"), systemImage: "square.and.arrow.up")
                 }
                 .disabled(!model.daemonAvailable)
 
@@ -550,14 +571,14 @@ struct SettingsView: View {
 
     private var daemonCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "팬 제어",
+            SectionHeader(title: L.t("팬 제어", "Fan control"),
                           subtitle: "팬 속도를 바꾸려면 macOS 가 관리자 권한을 요구합니다")
 
             HStack(spacing: 10) {
                 if model.daemonAvailable {
-                    StatusBadge(text: "켜짐", color: .green, symbol: "checkmark.seal.fill")
+                    StatusBadge(text: L.t("켜짐", "On"), color: .green, symbol: "checkmark.seal.fill")
                     if model.snapshot?.smcWritable == true {
-                        StatusBadge(text: "팬 제어 정상", color: .green)
+                        StatusBadge(text: L.t("팬 제어 정상", "Working"), color: .green)
                     } else {
                         StatusBadge(text: "속도 변경이 반영되지 않음", color: .orange,
                                     symbol: "exclamationmark.triangle.fill")
@@ -567,15 +588,19 @@ struct SettingsView: View {
                             .font(Theme.caption).foregroundStyle(.secondary)
                     }
                 } else {
-                    StatusBadge(text: "꺼짐", color: .orange)
+                    StatusBadge(text: L.t("꺼짐", "Off"), color: .orange)
                 }
                 Spacer()
             }
 
+            if model.helperOutdated {
+                EnableControlBanner(model: model)
+            }
+
             if model.daemonAvailable {
                 HStack(spacing: 8) {
-                    Button("모든 팬을 자동으로 되돌리기") { model.releaseAll() }
-                    Button("팬 제어 끄기") {
+                    Button(L.t("모든 팬을 자동으로 되돌리기", "Return all fans to automatic")) { model.releaseAll() }
+                    Button(L.t("팬 제어 끄기", "Turn off fan control")) {
                         installer.uninstall { _ in model.refreshConfig() }
                     }
                     Spacer()
