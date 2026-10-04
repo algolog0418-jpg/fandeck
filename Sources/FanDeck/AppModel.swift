@@ -18,6 +18,11 @@ final class AppModel {
     private(set) var fans: [FanInfo] = []
     private(set) var snapshot: StatusSnapshot?
     private(set) var daemonAvailable = false
+    /// 서비스가 깔려 있는데 아직 대답이 없는 상태(재부팅 직후 등).
+    ///
+    /// 이때는 사용자가 할 일이 없다. "켜지지 않았다" 고 말하면서 암호를 받으려 들면,
+    /// 재부팅할 때마다 권한을 다시 내놓으라는 앱이 된다.
+    private(set) var daemonStarting = false
     /// 백그라운드 서비스가 앱과 다른 버전인지.
     ///
     /// 서비스는 설정 파일을 자기가 아는 구조로만 읽고 쓴다. 앱만 새로 올리면
@@ -35,6 +40,10 @@ final class AppModel {
     private(set) var language: AppLanguage = .system
     /// 마지막으로 반영한 설정 개정 번호.
     @ObservationIgnored private var lastConfigRevision = -1
+    /// 앱이 뜬 시각. 서비스를 얼마나 기다려 줄지 재는 데 쓴다.
+    @ObservationIgnored private let launchedAt = Date()
+    /// 서비스가 올라올 때까지 기다려 주는 시간(초). 이보다 오래 조용하면 진짜 문제로 본다.
+    @ObservationIgnored private static let daemonStartupGrace: TimeInterval = 25
 
     var appVersion: String { BuildInfo.full }
 
@@ -144,12 +153,22 @@ final class AppModel {
 
     /// 처음 실행이고 팬 제어가 꺼져 있으면, 사용자가 버튼을 찾아 헤매지 않도록
     /// 앱이 뜨자마자 알아서 권한 창을 띄운다. 한 번 거절하면 다시 띄우지 않는다.
+    ///
+    /// 두 가지를 조심한다.
+    /// - 서비스가 이미 깔려 있으면 묻지 않는다. 재부팅 직후에는 서비스가 센서를
+    ///   훑는 동안 소켓이 아직 닫혀 있는데, 그걸 "안 깔렸다" 로 읽으면 재부팅마다
+    ///   암호 창이 떴다.
+    /// - 물어보기로 정한 순간에 기록을 남긴다. 예전에는 기록하는 줄 위에서 빠져나가는
+    ///   길이 있어서, 거절했는지 여부가 아예 저장되지 않았다.
     private func scheduleAutoEnable() {
         guard !UserDefaults.standard.bool(forKey: autoPromptKey) else { return }
         guard HelperInstaller.shared.canInstall else { return }
+        guard !HelperInstaller.isInstalled else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            guard let self, !self.daemonAvailable else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self else { return }
+            // 기다리는 동안 서비스가 올라왔거나 사용자가 직접 켰으면 그만둔다.
+            guard !self.daemonAvailable, !HelperInstaller.isInstalled else { return }
             UserDefaults.standard.set(true, forKey: self.autoPromptKey)
             HelperInstaller.shared.install { success in
                 guard success else { return }
@@ -316,6 +335,7 @@ final class AppModel {
                     let previouslyUnavailable = !self.daemonAvailable
                     self.snapshot = s
                     self.daemonAvailable = true
+                    if self.daemonStarting { self.daemonStarting = false }
                     let outdated = s.configSchema < FanDeckConfig.schemaVersion
                     if outdated != self.helperOutdated { self.helperOutdated = outdated }
                     // 메뉴 막대·CLI·자동 전환 등 다른 쪽에서 설정이 바뀌었을 수 있다.
@@ -330,6 +350,11 @@ final class AppModel {
                     self.snapshot = nil
                     self.daemonAvailable = false
                     self.helperOutdated = false
+                    // 깔려 있는데 조용하면 아직 올라오는 중이다. 한참 기다려도
+                    // 대답이 없으면 평소의 안내로 돌아간다.
+                    let starting = HelperInstaller.isInstalled
+                        && Date().timeIntervalSince(self.launchedAt) < Self.daemonStartupGrace
+                    if starting != self.daemonStarting { self.daemonStarting = starting }
                 }
             }
         }
@@ -471,6 +496,7 @@ final class AppModel {
                     guard !self.hasPendingConfigChange else { return }
                     self.config = c
                     self.daemonAvailable = true
+                    Self.mirrorStartupPreference(c)
                 } else if self.config == nil {
                     self.setLanguage(.system)
                     // 데몬이 없을 때도 UI 가 비어 보이지 않도록 기본 설정을 만들어 보여준다.
@@ -507,6 +533,7 @@ final class AppModel {
     /// 서비스가 초당 수십 번 설정 파일을 다시 쓰게 된다. 마지막 상태만 보내면 충분하다.
     func apply(config newConfig: FanDeckConfig) {
         setLanguage(newConfig.language)
+        Self.mirrorStartupPreference(newConfig)
         let appearanceChanged = config?.menuBarIconStyle != newConfig.menuBarIconStyle
             || config?.menuBarTwoLines != newConfig.menuBarTwoLines
         config = newConfig
@@ -625,6 +652,18 @@ final class AppModel {
         }
     }
 
+    /// 자동 실행 때 창을 띄울지 말지를 앱 쪽에도 적어 둔다.
+    ///
+    /// 이 설정의 원본은 서비스가 들고 있는 설정 파일이지만, 앱이 뜬 직후에는
+    /// 아직 소켓으로 올라오지 않았다. 올라올 때까지 기다린 다음 창을 닫으면
+    /// 그 사이에 창이 번쩍 떴다가 사라진다. 앱이 즉시 읽을 수 있는 자리에
+    /// 복사해 두고, 시작할 때는 그쪽을 본다.
+    nonisolated static let startMinimizedKey = "FanDeck.startMinimized"
+
+    private static func mirrorStartupPreference(_ config: FanDeckConfig) {
+        UserDefaults.standard.set(config.startMinimized, forKey: startMinimizedKey)
+    }
+
     private func setLanguage(_ newValue: AppLanguage) {
         let changed = L.language != newValue
         L.language = newValue
@@ -647,7 +686,14 @@ final class AppModel {
 
     /// 메뉴 막대에서 창을 열 때 쓴다. Dock 아이콘을 먼저 되살려야
     /// 창이 앞으로 나오고 메뉴 막대도 이 앱 것으로 바뀐다.
+    /// 사용자가 창을 열어 달라고 한 적이 있는지.
+    ///
+    /// 자동 실행 직후에는 앱이 창을 계속 닫아 두는데, 그 사이에 사용자가 메뉴 막대에서
+    /// 창을 열면 그쪽이 이긴다. 안 그러면 눌러도 안 열리는 것처럼 보인다.
+    @ObservationIgnored private(set) var userRequestedWindow = false
+
     func presentMainWindow() {
+        userRequestedWindow = true
         if NSApp.activationPolicy() != .regular {
             NSApp.setActivationPolicy(.regular)
         }

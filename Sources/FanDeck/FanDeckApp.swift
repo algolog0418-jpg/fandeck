@@ -4,30 +4,76 @@
 //  앱을 종료해도 팬 설정은 데몬이 계속 유지한다.
 
 import SwiftUI
+import Darwin
 
 /// 메뉴 막대 아이템을 들고 있을 곳. SwiftUI 쪽에는 둘 자리가 마땅치 않다.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
+    /// 창이 뜨려는 걸 막고 있는 동안 돌리는 감시자.
+    private var windowSuppressor: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
             let model = AppModel.shared
             statusItem = StatusItemController(model: model)
 
-            // 설정이 제어 서비스에서 올라온 뒤에 판단해야 해서 조금 기다린다.
+            // 로그인 항목으로 자동 실행된 경우에만 창을 감춘다.
+            // 사용자가 직접 연 경우에는 창이 떠야 한다.
+            if Self.launchedAtLogin(notification), Self.startsMinimized {
+                suppressInitialWindow()
+            }
+
+            // 업데이트 확인은 설정이 서비스에서 올라온 뒤에 판단해야 해서 조금 기다린다.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 if model.config?.checkUpdatesOnLaunch ?? true {
                     UpdateChecker.shared.check(silent: true)
                 }
-                if model.config?.startMinimized == true, Self.launchedAtLogin {
-                    // 로그인 직후 자동 실행된 경우에만 창을 감춘다.
-                    // 사용자가 직접 연 경우에는 창이 떠야 한다.
-                    for window in NSApp.windows where window.frame.width > 400 {
-                        window.close()
-                    }
-                }
             }
         }
+    }
+
+    /// 창이 화면에 나타나려는 순간 되돌린다.
+    ///
+    /// SwiftUI 의 Window 는 앱이 뜨면 알아서 열린다. 예전에는 설정을 읽고 나서
+    /// 1초 뒤에 닫았는데, 그 1초 동안 창이 번쩍 떴다 사라졌다. 열리는 즉시
+    /// 잡아야 "자동 실행됐지만 앱이 켜지지는 않은" 모습이 된다.
+    @MainActor
+    private func suppressInitialWindow() {
+        hideMainWindows()
+        // AppKit 에는 "창이 이제 보이려 한다" 는 알림이 없다. 자동 실행 직후
+        // 몇 초만 짧은 주기로 살펴보고, 창이 열리는 즉시 되돌린다.
+        let until = Date().addingTimeInterval(Self.windowSuppressionWindow)
+        windowSuppressor = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // 사용자가 메뉴 막대에서 창을 열었으면 그쪽이 이긴다.
+                if AppModel.shared.userRequestedWindow || Date() >= until {
+                    self.stopSuppressingWindow()
+                    return
+                }
+                self.hideMainWindows()
+            }
+        }
+    }
+
+    /// 자동 실행 직후 창을 막아 두는 시간(초). SwiftUI 가 창을 띄우는 데 걸리는
+    /// 시간만 가리면 되고, 길게 잡으면 사용자가 창을 열어도 닫히는 것처럼 보인다.
+    private static let windowSuppressionWindow: TimeInterval = 5
+
+    @MainActor
+    private func hideMainWindows() {
+        // 메뉴 막대 팝오버는 폭이 좁아서 크기로 구분된다.
+        for window in NSApp.windows where window.frame.width > 400 {
+            window.close()
+        }
+        let model = AppModel.shared
+        if model.isWindowVisible { model.isWindowVisible = false }
+    }
+
+    @MainActor
+    private func stopSuppressingWindow() {
+        windowSuppressor?.invalidate()
+        windowSuppressor = nil
     }
 
     /// 본 창에 최소 크기를 한 번만 지정한다.
@@ -39,13 +85,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 로그인하자마자 자동 실행된 것인지 가늠한다.
+    /// 로그인하자마자 자동 실행된 것인지.
     ///
-    /// macOS 는 "로그인 항목으로 실행됨" 을 앱에 직접 알려주지 않는다.
-    /// 부팅·로그인 직후에는 시스템 가동 시간이 짧다는 점을 이용한 어림이고,
-    /// 틀려도 창이 한 번 더 뜨거나 덜 뜨는 정도라 위험하지 않다.
-    private static var launchedAtLogin: Bool {
-        ProcessInfo.processInfo.systemUptime < 120
+    /// 두 가지를 같이 본다. 하나만으로는 어느 쪽도 정확하지 않다.
+    /// - macOS 가 실행 알림에 실어 주는 값. Finder·Dock 에서 직접 열면 true 다.
+    ///   다만 false 는 "로그인 항목" 만이 아니라 `open` 명령 같은 것까지 뭉뚱그린다.
+    /// - 로그인한 지 얼마나 됐는지. 자동 실행이라면 방금 로그인했을 수밖에 없다.
+    ///
+    /// 예전에는 가동 시간만 보고 "부팅 후 2분 안이면 자동 실행" 이라고 어림했다.
+    /// 그래서 재부팅하고 바로 직접 열면 창이 안 떴고, 로그아웃·로그인으로 다시
+    /// 자동 실행되면 창이 떴다.
+    private static func launchedAtLogin(_ notification: Notification) -> Bool {
+        let key = NSApplication.launchIsDefaultUserInfoKey
+        if let openedByUser = notification.userInfo?[key] as? Bool, openedByUser { return false }
+        guard let loginDate = consoleLoginDate else { return false }
+        return Date().timeIntervalSince(loginDate) < loginGrace
+    }
+
+    /// 로그인 직후로 쳐 주는 시간(초). 자동 실행되는 앱이 여럿이면 순서가 밀리므로
+    /// 넉넉하게 잡되, 사용자가 직접 뭔가 열기 시작할 만큼 길면 안 된다.
+    private static let loginGrace: TimeInterval = 180
+
+    /// 지금 화면 앞에 있는 사용자가 로그인한 시각.
+    ///
+    /// 재부팅뿐 아니라 로그아웃·로그인으로 다시 자동 실행된 경우까지 잡으려면
+    /// 시스템 가동 시간이 아니라 이 값을 봐야 한다. `who` 가 읽는 것과 같은 기록이다.
+    private static var consoleLoginDate: Date? {
+        setutxent()
+        defer { endutxent() }
+
+        var latest: Date?
+        while let entry = getutxent() {
+            let record = entry.pointee
+            guard record.ut_type == Int16(USER_PROCESS) else { continue }
+            var line = record.ut_line
+            let terminal = withUnsafeBytes(of: &line) { raw -> String in
+                let bytes = raw.prefix { $0 != 0 }
+                return String(decoding: bytes, as: UTF8.self)
+            }
+            guard terminal == "console" else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(record.ut_tv.tv_sec))
+            if latest.map({ date > $0 }) ?? true { latest = date }
+        }
+        return latest
+    }
+
+    /// 자동 실행 때 창을 띄우지 않을지. 원본은 서비스가 들고 있는 설정이지만,
+    /// 앱이 뜬 직후에는 아직 올라오지 않아서 앱이 복사해 둔 값을 읽는다.
+    private static var startsMinimized: Bool {
+        UserDefaults.standard.object(forKey: AppModel.startMinimizedKey) as? Bool ?? true
     }
 
     /// 창을 모두 닫아도 앱은 메뉴 막대에 남는다.
@@ -153,6 +241,8 @@ struct MainWindow: View {
 
             if model.daemonAvailable {
                 StatusBadge(text: model.activeProfileDisplayName, color: .accentColor)
+            } else if model.daemonStarting {
+                StatusBadge(text: L.t("시작 중", "Starting"), color: .gray)
             } else {
                 StatusBadge(text: L.t("제어 꺼짐", "Control off"), color: .orange)
             }

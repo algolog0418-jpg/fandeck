@@ -189,7 +189,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
                 temperatureUnit: TemperatureUnit = .celsius,
                 showDecimals: Bool = true,
                 showDockIcon: Bool = false,
-                startMinimized: Bool = false,
+                startMinimized: Bool = true,
                 checkUpdatesOnLaunch: Bool = true,
                 menuBarIconStyle: MenuBarIconStyle = .monochrome,
                 menuBarFanIndex: Int? = nil,
@@ -245,7 +245,7 @@ public struct FanDeckConfig: Codable, Hashable, Sendable {
         temperatureUnit = (try? c.decodeIfPresent(TemperatureUnit.self, forKey: .temperatureUnit)) ?? .celsius
         showDecimals = try c.decodeIfPresent(Bool.self, forKey: .showDecimals) ?? true
         showDockIcon = try c.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? false
-        startMinimized = try c.decodeIfPresent(Bool.self, forKey: .startMinimized) ?? false
+        startMinimized = try c.decodeIfPresent(Bool.self, forKey: .startMinimized) ?? true
         checkUpdatesOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .checkUpdatesOnLaunch) ?? true
         menuBarIconStyle = (try? c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle)) ?? .monochrome
         menuBarFanIndex = try c.decodeIfPresent(Int.self, forKey: .menuBarFanIndex)

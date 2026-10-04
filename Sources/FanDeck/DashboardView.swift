@@ -132,9 +132,13 @@ struct DashboardView: View {
             SectionHeader(title: L.t("빠른 제어", "Quick control"),
                           subtitle: model.daemonAvailable
                             ? L.t("사용 중인 모드: ", "Active mode: ") + model.activeProfileDisplayName
-                            : L.t("팬 제어가 아직 켜져 있지 않습니다", "Fan control is not enabled yet"))
+                            : model.daemonStarting
+                                ? L.t("서비스를 시작하는 중입니다", "Starting the service…")
+                                : L.t("팬 제어가 아직 켜져 있지 않습니다", "Fan control is not enabled yet"))
 
-            if !model.daemonAvailable || model.helperOutdated {
+            if model.daemonStarting {
+                daemonStartingNotice
+            } else if !model.daemonAvailable || model.helperOutdated {
                 daemonMissingNotice
             } else if model.snapshot?.smcWritable == false {
                 HStack(spacing: 8) {
@@ -250,6 +254,23 @@ struct DashboardView: View {
 
     private var daemonMissingNotice: some View {
         EnableControlBanner(model: model)
+    }
+
+    /// 서비스가 깔려 있는데 아직 대답이 없을 때. 재부팅 직후 몇 초가 여기다.
+    /// 이때 "켜지지 않았다" 고 말하면 재부팅마다 권한을 다시 내놓으라는 앱이 된다.
+    private var daemonStartingNotice: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text(L.t("팬 제어 서비스를 시작하고 있습니다. 잠시만 기다려 주세요.",
+                     "Starting the fan control service…"))
+                .font(.system(size: 11))
+            Spacer()
+        }
+        .padding(12)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.10))
+        }
     }
 
     private func profileChip(_ profile: Profile, isActive: Bool) -> some View {

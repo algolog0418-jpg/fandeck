@@ -24,6 +24,19 @@ final class HelperInstaller: ObservableObject {
 
     var isInstalling: Bool { state == .installing }
 
+    /// 백그라운드 서비스가 이미 설치돼 있는지. 소켓 연결과는 따로 본다.
+    ///
+    /// 서비스는 재부팅 직후 SMC 키 1300여 개를 훑고 나서야 소켓을 연다. 그 몇 초를
+    /// "설치 안 됨" 으로 읽으면, 멀쩡히 깔려 있는 서비스를 두고 암호 창을 또 띄운다.
+    /// 설치 여부는 파일이 있는지만 보면 알 수 있고, 읽기에는 권한이 필요하지 않다.
+    nonisolated static var isInstalled: Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: daemonPlistPath) && fm.fileExists(atPath: daemonBinaryPath)
+    }
+
+    nonisolated static let daemonPlistPath = "/Library/LaunchDaemons/com.fandeck.daemon.plist"
+    nonisolated static let daemonBinaryPath = "/usr/local/libexec/fandeckd"
+
     /// 앱 번들 안에 들어 있는 설치 스크립트와 실행 파일들.
     private var resourcesDirectory: URL? {
         Bundle.main.resourceURL

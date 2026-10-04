@@ -47,6 +47,8 @@ struct MenuBarView: View {
             Spacer()
             if model.snapshot?.isCritical == true {
                 StatusBadge(text: L.t("과열 보호", "Thermal protection"), color: .red, symbol: "exclamationmark.triangle.fill", pulsing: true)
+            } else if model.daemonStarting {
+                StatusBadge(text: L.t("시작 중", "Starting"), color: .gray)
             } else if !model.daemonAvailable {
                 StatusBadge(text: L.t("제어 꺼짐", "Control off"), color: .orange)
             }
