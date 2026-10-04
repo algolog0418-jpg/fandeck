@@ -213,22 +213,48 @@ final class ControlLoop {
             return
         }
         var processNames: Set<String>?
-        var best: (Profile, String)?
 
-        for profile in config.profiles.sorted(by: { $0.priority > $1.priority }) {
+        // 조건을 만족하는 후보를 모두 모은 뒤에 고른다.
+        //
+        // 예전에는 먼저 걸리는 하나를 그대로 썼는데, 우선순위가 모두 같으면
+        // 정렬 순서가 정해져 있지 않아서 어느 것이 뽑힐지 알 수 없었다.
+        // 온도 80도에서 "균형(65도 초과)" 과 "성능(75도 초과)" 이 둘 다 맞으면
+        // 더 약한 쪽이 걸릴 수 있었고, 그만큼 덜 식는다.
+        var candidates: [(profile: Profile, reason: String, threshold: Double, isApp: Bool)] = []
+
+        for profile in config.profiles {
             switch profile.trigger {
             case .manual:
                 continue
+
             case .appRunning(let names):
                 if processNames == nil { processNames = ProcessScanner.runningProcessNames() }
-                let hit = names.first { processNames!.contains($0.lowercased()) }
-                if let hit, best == nil { best = (profile, "\(hit) 실행 중") }
+                if let hit = names.first(where: { processNames!.contains($0.lowercased()) }) {
+                    candidates.append((profile,
+                                       L.t("\(hit) 실행 중", "\(hit) is running"),
+                                       0, true))
+                }
+
             case .sensorAbove(let key, let threshold):
-                if let v = sensorValue(key), v > threshold, best == nil {
-                    best = (profile, "\(key) \(String(format: "%.0f", v))°C > \(Int(threshold))°C")
+                if let value = sensorValue(key), value > threshold {
+                    candidates.append((profile,
+                                       "\(key) \(String(format: "%.0f", value))°C > \(Int(threshold))°C",
+                                       threshold, false))
                 }
             }
         }
+
+        // 고르는 순서:
+        //   1. 사용자가 정한 우선순위가 높은 것
+        //   2. 앱 조건(사용자가 콕 집어 지정한 것)이 온도 조건보다 먼저
+        //   3. 온도 조건끼리는 기준이 높은 쪽 — 더 뜨거울수록 더 센 설정으로 가야 한다
+        let best: (Profile, String)? = candidates.max { a, b in
+            if a.profile.priority != b.profile.priority {
+                return a.profile.priority < b.profile.priority
+            }
+            if a.isApp != b.isApp { return !a.isApp && b.isApp }
+            return a.threshold < b.threshold
+        }.map { ($0.profile, $0.reason) }
 
         if let (profile, reason) = best, config.activeProfileID != profile.id {
             config.activeProfileID = profile.id

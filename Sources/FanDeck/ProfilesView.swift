@@ -44,6 +44,13 @@ struct ProfilesView: View {
             }
             .toggleStyle(.switch)
 
+            if (model.config?.autoSwitchEnabled ?? false), hasAnyTrigger {
+                Text(L.t("여러 조건이 동시에 맞으면 온도 기준이 가장 높은 프로파일이 쓰입니다. 앱 조건은 온도 조건보다 먼저입니다.",
+                         "When several conditions match, the profile with the highest temperature threshold wins. App conditions take precedence over temperature ones."))
+                    .font(Theme.caption).foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let reason = model.snapshot?.autoSwitchReason {
                 StatusBadge(text: L.t("자동 전환 중 · ", "Auto-switched · ") + reason,
                             color: .accentColor, symbol: "wand.and.stars")
