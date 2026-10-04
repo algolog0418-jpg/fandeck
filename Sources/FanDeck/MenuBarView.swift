@@ -51,6 +51,11 @@ struct MenuBarView: View {
                 StatusBadge(text: L.t("제어 꺼짐", "Control off"), color: .orange)
             }
         }
+        // 뱃지는 글자보다 키가 커서, 나타났다 사라질 때마다 아래 내용이 통째로
+        // 몇 픽셀씩 밀렸다. 제어 서비스 응답이 한 번 늦기만 해도 "제어 꺼짐" 이
+        // 잠깐 떴다 사라지므로, 속도 막대가 내려갔다 올라오는 것처럼 보였다.
+        // 줄 높이를 뱃지에 맞춰 고정해 두면 무엇이 떠도 아래가 움직이지 않는다.
+        .frame(height: 22)
     }
 
     private func fanSection(_ fan: FanInfo) -> some View {
@@ -64,19 +69,36 @@ struct MenuBarView: View {
                                                     minRPM: fan.minRPM, maxRPM: fan.maxRPM)
                 Text("\(Int(db))dB · \(NoiseEstimator.label(forDB: db))")
                     .font(Theme.caption).foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            // 소음 문구 길이가 바뀌어도 이 줄의 높이는 그대로여야 한다.
+            .frame(height: 32)
 
-            // 속도 막대
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.09))
-                    Capsule()
-                        .fill(Theme.fanColor(fan.loadFraction))
-                        .frame(width: max(geo.size.width * fan.loadFraction, 4))
-                        .animation(.easeOut(duration: 0.6), value: fan.loadFraction)
+            // 속도 막대 — 최소~최대 사이에서 지금 어디쯤인지.
+            //
+            // 예전에는 막대만 덩그러니 있어서, 팬이 최저 속도로 돌 때(이 맥은 1,000rpm)
+            // 왼쪽 끝에 점 하나만 찍힌 꼴이 됐다. 눈금이 없으니 그게 "범위의 맨 아래"인지
+            // 그리기 오류인지 알 수 없었다. 양 끝에 최소·최대 rpm 을 적어 눈금을 준다.
+            VStack(alignment: .leading, spacing: 3) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.09))
+                        Capsule()
+                            .fill(Theme.fanColor(fan.loadFraction))
+                            // 최소 너비를 막대 높이에 맞춰야 눌린 네모가 아니라 동그라미로 끝난다.
+                            .frame(width: max(geo.size.width * fan.loadFraction, geo.size.height))
+                    }
                 }
+                .frame(height: 6)
+
+                HStack(spacing: 0) {
+                    Text("\(Int(fan.minRPM))")
+                    Spacer()
+                    Text("\(Int(fan.maxRPM))")
+                }
+                .font(Theme.numeric(9, weight: .regular))
+                .foregroundStyle(.tertiary)
             }
-            .frame(height: 5)
 
             HStack(spacing: 8) {
                 Slider(value: $ui.manualRPM, in: fan.minRPM...fan.maxRPM, step: 50) { editing in

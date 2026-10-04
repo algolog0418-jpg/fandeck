@@ -30,6 +30,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 본 창에 최소 크기를 한 번만 지정한다.
+    static func applyWindowMinimumSize() {
+        DispatchQueue.main.async {
+            for window in NSApp.windows where window.frame.width > 400 {
+                window.minSize = NSSize(width: 860, height: 620)
+            }
+        }
+    }
+
     /// 로그인하자마자 자동 실행된 것인지 가늠한다.
     ///
     /// macOS 는 "로그인 항목으로 실행됨" 을 앱에 직접 알려주지 않는다.
@@ -63,11 +72,14 @@ struct FanDeckApp: App {
     private let model = AppModel.shared
 
     var body: some Scene {
+        // 최소 크기를 SwiftUI 의 .frame(minWidth:minHeight:) 로 주면,
+        // AppKit 이 레이아웃할 때마다 "이 내용의 최소 크기가 얼마냐"고 묻고
+        // SwiftUI 는 그때마다 화면 전체를 다시 재어 본다. 창을 열어 두는 동안
+        // 매 프레임 그 비용을 냈다. 최소 크기는 창에 한 번만 박아 두면 된다.
         Window("FanDeck", id: "main") {
             MainWindow(model: model)
-                .frame(minWidth: 860, minHeight: 620)
+                .onAppear { AppDelegate.applyWindowMinimumSize() }
         }
-        .windowResizability(.contentMinSize)
         .defaultSize(width: 980, height: 720)
 
         // 메뉴 막대는 AppKit(StatusItemController)이 맡는다.
@@ -78,6 +90,23 @@ struct MainWindow: View {
     @Bindable var model: AppModel
 
     var body: some View {
+        // 창을 닫아도 SwiftUI 는 이 화면을 버리지 않는다. 그래서 창이 없는데도
+        // 그래프와 팬 날개가 계속 그려지면서 CPU 를 10% 넘게 쓰고 있었다.
+        // 보이지 않을 때는 빈 화면으로 바꿔 뷰 자체를 없앤다.
+        Group {
+            if model.isWindowVisible {
+                content
+            } else {
+                Color.clear
+            }
+        }
+        // 언어는 전역 값이라 바뀌어도 SwiftUI 가 다시 그리지 않는다.
+        // 여기에 묶어 두면 언어가 달라질 때 화면이 통째로 새로 만들어진다.
+        .id(model.language)
+        .background(.background)
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             titleBar
             Divider()
@@ -93,10 +122,6 @@ struct MainWindow: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // 언어는 전역 값이라 바뀌어도 SwiftUI 가 다시 그리지 않는다.
-        // 여기에 묶어 두면 언어가 달라질 때 화면이 통째로 새로 만들어진다.
-        .id(model.language)
-        .background(.background)
     }
 
     private var titleBar: some View {

@@ -113,7 +113,6 @@ struct ActivityView: View {
                     Rectangle().fill(Color.primary.opacity(0.08))
                 }
                 .clipShape(Capsule())
-                .animation(.easeOut(duration: 0.4), value: model.cpuUsage.busy)
             }
             .frame(height: 7)
 
@@ -162,7 +161,6 @@ struct ActivityView: View {
                     Capsule()
                         .fill(pressureColor)
                         .frame(width: max(geo.size.width * memory.usedFraction, 3))
-                        .animation(.easeOut(duration: 0.4), value: memory.usedFraction)
                 }
             }
             .frame(height: 7)

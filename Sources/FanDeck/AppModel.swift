@@ -252,11 +252,15 @@ final class AppModel {
             }
         }
 
+        // 화면이 하나도 안 보이면 메뉴 막대에 쓸 값만 있으면 된다.
+        // 사용량 통계는 보여 줄 데가 없는데 시스템 호출만 하게 된다.
+        let wantSystemUsage = isUIVisible
+
         Task.detached(priority: .userInitiated) {
             let values = SMCService.shared.snapshot(targets)
             let fanList = FanController.shared.readAllFans()
-            let cpu = SystemMonitor.shared.cpuUsage()
-            let memory = SystemMonitor.shared.memoryUsage()
+            let cpu = wantSystemUsage ? SystemMonitor.shared.cpuUsage() : nil
+            let memory = wantSystemUsage ? SystemMonitor.shared.memoryUsage() : nil
             let processList = wantProcesses
                 ? SystemMonitor.shared.processes(displayNames: names)
                 : nil
@@ -276,8 +280,8 @@ final class AppModel {
                 guard let self else { return }
                 self.readings.merge(values) { _, new in new }
                 self.fans = fanList
-                self.cpuUsage = cpu
-                self.memoryUsage = memory
+                if let cpu { self.cpuUsage = cpu }
+                if let memory { self.memoryUsage = memory }
                 if let processList { self.processes = processList }
 
                 self.liveHistory.append(sample)
@@ -602,7 +606,10 @@ final class AppModel {
     /// 메뉴 막대 팝오버는 폭이 좁아서 크기로 구분된다.
     private func refreshWindowVisibility() {
         let visible = NSApp.windows.contains { window in
-            window.isVisible && window.frame.width > 400 && window.frame.height > 300
+            guard window.isVisible, window.frame.width > 400, window.frame.height > 300
+            else { return false }
+            // 최소화했거나 다른 창에 완전히 가려졌으면 그리는 의미가 없다.
+            return window.occlusionState.contains(.visible)
         }
         guard visible != isWindowVisible else { return }
         isWindowVisible = visible
@@ -644,6 +651,8 @@ final class AppModel {
         if NSApp.activationPolicy() != .regular {
             NSApp.setActivationPolicy(.regular)
         }
+        // 폴링이 창을 알아챌 때까지(최대 0.5초) 빈 화면이 보이면 안 된다.
+        isWindowVisible = true
         NSApp.activate(ignoringOtherApps: true)
     }
 }

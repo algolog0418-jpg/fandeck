@@ -16,6 +16,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private var popover: NSPopover?
     private let model: AppModel
 
+    /// 팝오버 밖을 눌렀을 때 닫기 위한 감시자. 팝오버가 떠 있는 동안에만 둔다.
+    private var outsideClickMonitor: Any?
+    private var appSwitchObserver: NSObjectProtocol?
+
     init(model: AppModel) {
         self.model = model
         super.init()
@@ -97,10 +101,60 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         self.popover = popover
         model.isMenuOpen = true
+        watchForDismissal()
+    }
+
+    /// 팝오버 밖을 눌렀을 때 닫는다.
+    ///
+    /// `.transient` 면 AppKit 이 알아서 닫아 줄 것 같지만, 메뉴 막대에서 연 팝오버는
+    /// 앱이 맨 앞에 있지 않은 채로 뜬다. 그러면 바탕 화면이나 다른 앱을 눌러도
+    /// 그 클릭이 우리 앱에 오지 않아 팝오버가 그대로 남아 있었다.
+    ///
+    /// 그래서 (1) 다른 앱으로 간 클릭을 전역 감시자로 직접 받고,
+    /// (2) 마우스를 쓰지 않고 Command-Tab 으로 앱을 바꾼 경우까지 챙긴다.
+    /// 앱을 맨 앞으로 끌어올려서(activate) 해결하는 방법도 있지만, 그러면
+    /// 메뉴만 보려던 참에 본 창까지 다른 앱 위로 튀어나온다.
+    private func watchForDismissal() {
+        if outsideClickMonitor == nil {
+            outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.closePopover() }
+            }
+        }
+        if appSwitchObserver == nil {
+            appSwitchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil, queue: .main
+            ) { [weak self] note in
+                // 팝오버를 띄우는 순간 우리 앱이 맨 앞으로 올라오면서 이 알림이 올 수 있다.
+                // 그걸 그대로 받으면 열리자마자 닫힌다.
+                let activated = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                guard activated?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+                MainActor.assumeIsolated { self?.closePopover() }
+            }
+        }
+    }
+
+    private func stopWatchingForDismissal() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+            self.outsideClickMonitor = nil
+        }
+        if let appSwitchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(appSwitchObserver)
+            self.appSwitchObserver = nil
+        }
+    }
+
+    private func closePopover() {
+        guard let popover, popover.isShown else { return }
+        popover.performClose(nil)
     }
 
     func popoverDidClose(_ notification: Notification) {
         // 팝오버를 닫으면 뷰까지 버린다. 안 보이는 화면을 계속 갱신할 이유가 없다.
+        stopWatchingForDismissal()
         model.isMenuOpen = false
         popover = nil
     }

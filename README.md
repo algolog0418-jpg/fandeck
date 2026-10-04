@@ -15,7 +15,7 @@ Macs Fan Control 을 대체하면서, 활동 상태 보기 기능까지 한 앱�
 ## 받기
 
 [최신 릴리스](https://github.com/algolog0418-jpg/fandeck/releases/latest)에서
-`FanDeck-1.0.0.zip` 을 받아 압축을 풀고 **FanDeck.app** 을 응용 프로그램 폴더에 넣는다.
+`FanDeck-1.0.5.zip` 을 받아 압축을 풀고 **FanDeck.app** 을 응용 프로그램 폴더에 넣는다.
 
 내려받은 앱은 서명이 ad-hoc 이라 macOS 가 격리한다. 한 번만 아래를 실행하면 된다.
 

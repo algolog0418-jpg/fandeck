@@ -33,6 +33,13 @@ struct GaugeArc: Shape {
     }
 }
 
+/// 팬 상태를 보여 주는 원형 계기.
+///
+/// 값이 바뀔 때 부드럽게 따라가도록 easeOut 애니메이션을 걸어 뒀었는데,
+/// 그게 창을 열어 둔 동안 CPU 사용량의 대부분이었다(16% → 3.6%).
+/// SwiftUI 애니메이션이 하나라도 돌면 그 0.3초 동안 매 프레임 화면 전체를
+/// 다시 재고 다시 그린다. 값은 1.5초에 한 번 바뀌므로 그냥 바로 옮긴다.
+/// 살아 있다는 느낌은 Core Animation 으로 도는 날개가 맡는다.
 struct FanGauge: View {
     let fan: FanInfo
     let appliedRPM: Double?
@@ -59,7 +66,6 @@ struct FanGauge: View {
                     style: StrokeStyle(lineWidth: size * 0.075, lineCap: .round))
                 .padding(size * 0.0375)
                 .shadow(color: color.opacity(0.4), radius: size * 0.045)
-                .animation(.easeOut(duration: 0.8), value: fraction)
 
             // 데몬이 지정한 목표 지점 표식 — 실제 속도가 목표를 따라가는 중인지 보인다.
             if let appliedRPM, fan.maxRPM > fan.minRPM {
@@ -72,7 +78,6 @@ struct FanGauge: View {
                             .frame(width: size * 0.035, height: size * 0.035)
                             .offset(y: -(size / 2 - size * 0.0375))
                             .rotationEffect(.degrees(-135 + 270 * targetFraction))
-                            .animation(.easeOut(duration: 0.8), value: targetFraction)
                     }
             }
 
@@ -82,7 +87,6 @@ struct FanGauge: View {
                 Text("\(Int(fan.currentRPM.rounded()))")
                     .font(Theme.numeric(size * 0.21, weight: .bold))
                     .contentTransition(.numericText())
-                    .animation(.easeOut(duration: 0.5), value: fan.currentRPM)
                     .shadow(color: .black.opacity(0.12), radius: 3)
                 Text("rpm")
                     .font(Theme.numeric(size * 0.062, weight: .medium))
@@ -117,48 +121,91 @@ private struct BladesShape: Shape {
     }
 }
 
-private final class SpinState: ObservableObject {
-    @Published var spinning = false
-}
-
 /// 실제 회전수에 비례해 도는 팬 날개.
 ///
-/// 처음에는 TimelineView + Canvas 로 매 프레임 다시 그렸는데, 그것만으로
-/// CPU 를 40% 넘게 썼다. 팬 제어 앱이 열을 만들면 앞뒤가 안 맞는다.
-/// 지금은 모양을 한 번만 만들고 회전은 Core Animation 에 넘겨서 GPU 가 처리한다.
-private struct SpinningBlades: View {
+/// 처음에는 TimelineView + Canvas 로 매 프레임 다시 그렸고(CPU 40%),
+/// 그 다음에는 SwiftUI 의 repeatForever 애니메이션으로 돌렸다. 두 번째도
+/// 생각만큼 싸지 않았다. SwiftUI 안에서 끝없이 도는 애니메이션이 하나라도 있으면
+/// 호스팅 뷰가 매 프레임 레이아웃을 다시 하고, 그러면서 같은 창에 있는
+/// 그래프까지 통째로 다시 평가한다. 창을 열어 두기만 해도 CPU 10% 를 먹었다.
+///
+/// 지금은 날개를 레이어로 한 번만 그리고 회전은 CABasicAnimation 에 맡긴다.
+/// 애니메이션을 건 뒤로는 SwiftUI 가 매 프레임 할 일이 없다.
+private struct SpinningBlades: NSViewRepresentable {
     let rpm: Double
     let color: Color
     let size: CGFloat
 
-    @StateObject private var state = SpinState()
+    func makeNSView(context: Context) -> BladesLayerView { BladesLayerView() }
+
+    func updateNSView(_ view: BladesLayerView, context: Context) {
+        view.apply(size: size, color: color, rpm: rpm)
+    }
+}
+
+/// 날개 하나를 그리고 돌리는 레이어. SwiftUI 는 여기에 값만 넘긴다.
+final class BladesLayerView: NSView {
+    private let blades = CAShapeLayer()
+    private var appliedSize: CGFloat = -1
+    private var appliedBucket = -1
+    private var appliedColor: NSColor?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.addSublayer(blades)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 마우스는 그냥 통과시킨다. 장식일 뿐이다.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     /// 회전 속도를 200rpm 단위로 끊는다. 실측값이 매초 몇 rpm 씩 흔들리는데
     /// 그때마다 애니메이션을 다시 걸면 각도가 튄다.
-    private var bucket: Int {
-        // 화면 주사율보다 빠른 회전은 눈에 역회전으로 보이므로 표시 속도를 눌러준다.
-        Int(min(rpm, 420) / 200)
+    /// 화면 주사율보다 빠른 회전은 눈에 역회전으로 보이므로 표시 속도도 눌러준다.
+    private static func bucket(forRPM rpm: Double) -> Int { Int(min(rpm, 420) / 200) }
+
+    func apply(size: CGFloat, color: Color, rpm: Double) {
+        let nsColor = NSColor(color).withAlphaComponent(0.22)
+        if size != appliedSize {
+            appliedSize = size
+            let rect = CGRect(x: 0, y: 0, width: size, height: size)
+            blades.frame = rect
+            blades.path = BladesShape(count: 7).path(in: rect).cgPath
+            // 가운데를 축으로 돌아야 한다.
+            blades.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            blades.position = CGPoint(x: size / 2, y: size / 2)
+        }
+        if nsColor != appliedColor {
+            appliedColor = nsColor
+            blades.fillColor = nsColor.cgColor
+        }
+
+        let bucket = Self.bucket(forRPM: rpm)
+        if bucket != appliedBucket || blades.animation(forKey: "spin") == nil {
+            appliedBucket = bucket
+            let displayRPM = max(Double(bucket) * 200 + 100, 60)
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.fromValue = 0
+            spin.toValue = -2 * Double.pi      // 화면 좌표계에서 시계 방향
+            spin.duration = 60.0 / displayRPM
+            spin.repeatCount = .infinity
+            spin.isRemovedOnCompletion = false
+            blades.removeAnimation(forKey: "spin")
+            blades.add(spin, forKey: "spin")
+        }
     }
 
-    private var secondsPerRevolution: Double {
-        let displayRPM = max(Double(bucket) * 200 + 100, 60)
-        return 60.0 / displayRPM
+    override func layout() {
+        super.layout()
+        guard appliedSize > 0 else { return }
+        blades.position = CGPoint(x: bounds.midX, y: bounds.midY)
     }
 
-    var body: some View {
-        BladesShape(count: 7)
-            .fill(color.opacity(0.22))
-            .frame(width: size, height: size)
-            .rotationEffect(.degrees(state.spinning ? 360 : 0))
-            .animation(.linear(duration: secondsPerRevolution).repeatForever(autoreverses: false),
-                       value: state.spinning)
-            .onAppear { state.spinning = true }
-            .onChange(of: bucket) { _, _ in
-                // 속도 구간이 바뀌면 새 속도로 다시 건다.
-                state.spinning = false
-                DispatchQueue.main.async { state.spinning = true }
-            }
-            .allowsHitTesting(false)
+    override var intrinsicContentSize: NSSize {
+        appliedSize > 0 ? NSSize(width: appliedSize, height: appliedSize) : .zero
     }
 }
 
