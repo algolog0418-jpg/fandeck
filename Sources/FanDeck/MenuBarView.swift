@@ -31,6 +31,9 @@ struct MenuBarView: View {
         }
         .padding(14)
         .frame(width: 290)
+        // 팝오버 기본 배경은 반투명이라 뒤쪽 화면이 비친다. 그 위에서는 수치 색이
+        // 묻혀서 읽기 어려웠다. 불투명하게 깔아 글자와 배경의 대비를 확보한다.
+        .background(Color(nsColor: .windowBackgroundColor))
         .id(model.language)
         .onAppear { model.isMenuOpen = true }
         .onDisappear { model.isMenuOpen = false }

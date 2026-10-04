@@ -90,6 +90,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
         let popover = NSPopover()
         popover.behavior = .transient
+        // 내용이 직접 배경을 칠하므로 팝오버의 반투명 효과는 끈다.
+        popover.appearance = NSApp.effectiveAppearance
         popover.delegate = self
         popover.contentViewController = NSHostingController(rootView: MenuBarView(model: model))
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)

@@ -11,39 +11,85 @@ enum Theme {
     //
     // 차가움(청록) → 적정(초록) → 주의(호박) → 뜨거움(주황) → 위험(빨강)
     // 구간을 끊지 않고 보간해서, 온도가 오를 때 색도 연속적으로 변한다.
+    //
+    // 색을 한 벌만 두면 한쪽 테마에서 반드시 묻힌다. 밝은 배경에서 잘 보이는 색은
+    // 어두운 배경에서 탁하고, 어두운 배경에서 선명한 색은 밝은 배경에서 희미하다.
+    // 특히 메뉴 막대 팝오버는 배경이 비쳐서 더 심하다. 그래서 두 벌을 두고
+    // 시스템 테마에 따라 고르게 한다.
 
-    private static let temperatureStops: [(Double, Color)] = [
-        (30, Color(red: 0.22, green: 0.72, blue: 0.85)),
-        (50, Color(red: 0.25, green: 0.80, blue: 0.55)),
-        (65, Color(red: 0.95, green: 0.75, blue: 0.25)),
-        (80, Color(red: 0.98, green: 0.52, blue: 0.22)),
-        (95, Color(red: 0.95, green: 0.27, blue: 0.30)),
+    private typealias RGB = (r: Double, g: Double, b: Double)
+
+    /// 밝은 배경용 — 충분히 어둡고 진하게.
+    private static let lightStops: [(Double, RGB)] = [
+        (30, (0.08, 0.45, 0.58)),
+        (50, (0.10, 0.50, 0.32)),
+        (65, (0.68, 0.46, 0.05)),
+        (80, (0.78, 0.33, 0.06)),
+        (95, (0.76, 0.13, 0.16)),
     ]
 
-    static func temperatureColor(_ celsius: Double) -> Color {
-        guard let first = temperatureStops.first else { return .gray }
-        if celsius <= first.0 { return first.1 }
-        if let last = temperatureStops.last, celsius >= last.0 { return last.1 }
-        for i in 0..<(temperatureStops.count - 1) {
-            let (t0, c0) = temperatureStops[i]
-            let (t1, c1) = temperatureStops[i + 1]
-            if celsius >= t0 && celsius <= t1 {
-                return blend(c0, c1, (celsius - t0) / (t1 - t0))
+    /// 어두운 배경용 — 밝고 선명하게.
+    private static let darkStops: [(Double, RGB)] = [
+        (30, (0.35, 0.78, 0.90)),
+        (50, (0.35, 0.85, 0.60)),
+        (65, (0.97, 0.80, 0.35)),
+        (80, (1.00, 0.60, 0.30)),
+        (95, (1.00, 0.40, 0.42)),
+    ]
+
+    private static func interpolate(_ stops: [(Double, RGB)], _ value: Double) -> RGB {
+        guard let first = stops.first, let last = stops.last else { return (0.5, 0.5, 0.5) }
+        if value <= first.0 { return first.1 }
+        if value >= last.0 { return last.1 }
+        for i in 0..<(stops.count - 1) {
+            let (v0, c0) = stops[i]
+            let (v1, c1) = stops[i + 1]
+            if value >= v0 && value <= v1 {
+                let t = (value - v0) / (v1 - v0)
+                return (c0.r + (c1.r - c0.r) * t,
+                        c0.g + (c1.g - c0.g) * t,
+                        c0.b + (c1.b - c0.b) * t)
             }
         }
-        return temperatureStops.last!.1
+        return last.1
+    }
+
+    /// 테마에 따라 알아서 바뀌는 색을 만든다.
+    private static func adaptive(light: RGB, dark: RGB) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let c = isDark ? dark : light
+            return NSColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: 1)
+        })
+    }
+
+    static func temperatureColor(_ celsius: Double) -> Color {
+        adaptive(light: interpolate(lightStops, celsius),
+                 dark: interpolate(darkStops, celsius))
     }
 
     /// 단위에 맞는 강조색. 온도가 아닌 값은 고정색을 쓴다.
     static func accent(for unit: SensorUnit, value: Double) -> Color {
         switch unit {
         case .celsius: return temperatureColor(value)
-        case .watt:    return Color(red: 0.55, green: 0.55, blue: 0.95)
-        case .volt:    return Color(red: 0.95, green: 0.70, blue: 0.40)
-        case .ampere:  return Color(red: 0.45, green: 0.80, blue: 0.75)
-        case .rpm:     return Color(red: 0.35, green: 0.68, blue: 0.95)
-        case .percent: return Color(red: 0.60, green: 0.75, blue: 0.90)
+        case .watt:    return adaptive(light: (0.33, 0.33, 0.78), dark: (0.62, 0.62, 1.00))
+        case .volt:    return adaptive(light: (0.70, 0.45, 0.10), dark: (0.98, 0.76, 0.45))
+        case .ampere:  return adaptive(light: (0.12, 0.48, 0.45), dark: (0.50, 0.85, 0.80))
+        case .rpm:     return adaptive(light: (0.12, 0.42, 0.70), dark: (0.45, 0.74, 1.00))
+        case .percent: return adaptive(light: (0.30, 0.40, 0.55), dark: (0.68, 0.80, 0.95))
         }
+    }
+
+    /// 팬 속도 비율에 따른 색. 조용할수록 차분하고, 빨라질수록 선명해진다.
+    static func fanColor(_ fraction: Double) -> Color {
+        let f = min(max(fraction, 0), 1)
+        let light: RGB = (0.12 + (0.76 - 0.12) * f,
+                          0.42 + (0.28 - 0.42) * f,
+                          0.70 + (0.16 - 0.70) * f)
+        let dark: RGB = (0.45 + (1.00 - 0.45) * f,
+                         0.74 + (0.52 - 0.74) * f,
+                         1.00 + (0.42 - 1.00) * f)
+        return adaptive(light: light, dark: dark)
     }
 
     static func blend(_ a: Color, _ b: Color, _ t: Double) -> Color {
@@ -55,11 +101,6 @@ enum Theme {
                      blue:  ca.blueComponent  + (cb.blueComponent  - ca.blueComponent)  * t)
     }
 
-    /// 팬 속도 비율에 따른 색. 조용할수록 차분하고, 빨라질수록 선명해진다.
-    static func fanColor(_ fraction: Double) -> Color {
-        blend(Color(red: 0.35, green: 0.68, blue: 0.95),
-              Color(red: 0.98, green: 0.45, blue: 0.35), fraction)
-    }
 
     // MARK: 치수
 
