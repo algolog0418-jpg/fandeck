@@ -12,9 +12,27 @@
 Macs Fan Control 을 대체하면서, 활동 상태 보기 기능까지 한 앱에 합쳤다.
 라이선스는 MIT, 안전 관련 주의사항은 [SAFETY.md](SAFETY.md) 에 있다.
 
+## 받기
+
+[최신 릴리스](https://github.com/algolog0418-jpg/fandeck/releases/latest)에서
+`FanDeck-1.0.0.zip` 을 받아 압축을 풀고 **FanDeck.app** 을 응용 프로그램 폴더에 넣는다.
+
+내려받은 앱은 서명이 ad-hoc 이라 macOS 가 격리한다. 한 번만 아래를 실행하면 된다.
+
+```sh
+xattr -dr com.apple.quarantine /Applications/FanDeck.app
+```
+
+소스에서 직접 빌드하면 이 과정이 필요 없다.
+
+```sh
+git clone https://github.com/algolog0418-jpg/fandeck.git
+cd fandeck && Scripts/build.sh
+```
+
 ## 쓰는 법
 
-1. `build/FanDeck.app` 을 실행한다 (응용 프로그램 폴더로 옮겨도 된다).
+1. `FanDeck.app` 을 실행한다.
 2. 처음 열면 암호 창이 한 번 뜬다. 입력하면 팬 제어가 켜진다.
    - macOS 는 팬 속도 변경에 반드시 관리자 권한을 요구한다. Macs Fan Control 도 같은 방식이다.
    - 취소해도 **온도·CPU·메모리 보기는 전부 정상 동작**한다. 팬 속도만 못 바꾼다.
@@ -31,7 +49,7 @@ Macs Fan Control 을 대체하면서, 활동 상태 보기 기능까지 한 앱�
 | 활동 | CPU·메모리 사용량, 프로세스 목록, 프로세스 종료 |
 | 팬 커브 | 다점 곡선 편집(드래그), 소음 완충 설정 |
 | 프로파일 | 모드 관리, 앱 실행·온도 기반 자동 전환 |
-| 설정 | 과열 보호, 알림, 메뉴 막대, 기록 CSV 내보내기 |
+| 설정 | 언어(한/영/일/중), 온도 단위, 과열 보호, 알림, 메뉴 막대, 기록 CSV 내보내기 |
 
 ## 온도 값에 대해
 

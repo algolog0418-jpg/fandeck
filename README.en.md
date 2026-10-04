@@ -23,10 +23,19 @@ CPU, memory and process views in the same app.
 | **Safety** | Configurable critical temperature forces fans to maximum regardless of mode |
 | **Power** | Reads SMC power rails (system total watts, package power) |
 | **CLI** | `fandeck status`, `fandeck set 1800`, `fandeck watch`, `fandeck export out.csv` |
+| **Languages** | Korean, English, Japanese, Simplified Chinese — switchable without restart |
 
 ## Install
 
-No Xcode required — only Apple's Command Line Tools.
+Download the [latest release](https://github.com/algolog0418-jpg/fandeck/releases/latest),
+unzip, and move **FanDeck.app** to Applications. Builds are signed ad-hoc, so run once:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/FanDeck.app
+```
+
+Or build from source, which avoids the quarantine. No Xcode required — only Apple's
+Command Line Tools.
 
 ```sh
 git clone https://github.com/USER/fandeck.git
